@@ -331,15 +331,22 @@ export class MarketingPage extends LitElement {
 
             <!-- CTAs -->
             <div data-hero-item class="flex flex-col sm:flex-row items-center gap-3">
-              <a href="#/benchmark" data-cta-btn
-                data-umami-event="marketing-benchmark-click"
+              <a href="#/app" data-cta-btn
+                data-umami-event="marketing-app-click"
                 class="btn btn-primary btn-lg rounded-full px-12 gap-2 mkt-cta-glow"
                 style="box-shadow: 0 0 30px color-mix(in oklab, var(--color-primary) 35%, transparent), 0 4px 16px color-mix(in oklab, var(--color-primary) 20%, transparent);">
-                Take the speed test ${icon(ArrowRight, "w-4 h-4")}
+                Start reading free ${icon(ArrowRight, "w-4 h-4")}
               </a>
-              <a href="#/app" class="btn btn-ghost btn-lg text-ui-muted hover:text-base-content text-ui-body">
-                Open the reader
-              </a>
+              <span class="flex items-center gap-2">
+                <a href="#/benchmark"
+                  data-umami-event="marketing-benchmark-click"
+                  class="btn btn-ghost btn-lg text-ui-muted hover:text-base-content text-ui-body">
+                  Take the speed test
+                </a>
+                <span class="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase text-primary/80">
+                  Recommended
+                </span>
+              </span>
             </div>
 
             <div data-hero-item class="mt-8 flex flex-wrap items-center justify-center gap-2">
@@ -522,13 +529,13 @@ export class MarketingPage extends LitElement {
           <div class="max-w-3xl mx-auto">
             <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-10 items-center">
               <div>
-                <p class="text-ui-body tracking-[0.35em] uppercase text-primary/80 mb-4 font-semibold" data-reveal>Baseline test</p>
+                <p class="text-ui-body tracking-[0.35em] uppercase text-primary/80 mb-4 font-semibold" data-reveal>Optional but worth it</p>
                 <h2 class="text-ui-hero font-semibold text-base-content leading-tight mb-4" data-reveal>
-                  What's your<br/><span class="font-semibold">reading speed?</span>
+                  Know your<br/><span class="font-semibold">starting point.</span>
                 </h2>
                 <p class="text-ui-body text-ui-muted max-w-sm mb-8" data-reveal>
-                  Read a short passage at your own pace, then answer 10 comprehension questions.
-                  Your WPM and accuracy are saved as your baseline.
+                  If you're serious about improving, a 3-minute baseline tells you exactly where you stand —
+                  your WPM and comprehension, saved locally so you can track progress over time.
                 </p>
                 <div class="flex flex-wrap gap-3" data-reveal>
                   <a href="#/benchmark" data-cta-btn
@@ -538,6 +545,9 @@ export class MarketingPage extends LitElement {
                   </a>
                 </div>
                 <p class="text-ui-body text-ui-muted-subtle mt-4" data-reveal>~3 minutes · no timer · no pressure</p>
+                <a href="#/app" class="inline-block mt-3 text-ui-body text-ui-muted-subtle hover:text-ui-muted transition-colors underline-offset-2 hover:underline" data-reveal>
+                  No thanks — just open the reader →
+                </a>
               </div>
               <div class="hidden md:flex flex-col items-center select-none text-primary/25" aria-hidden="true">
                 <span class="font-semibold tabular-nums font-mono text-ui-hero" style="font-size: 5rem; line-height: 1;">

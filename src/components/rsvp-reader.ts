@@ -1021,9 +1021,9 @@ export class RsvpReader extends LitElement {
         <!-- Central focal reticle -->
         <div class="absolute inset-y-0 z-10 pointer-events-none flex flex-col justify-between py-2" style="left: ${anchorPercent}%; width: 0px;">
           <!-- Top notch -->
-          <div class="absolute top-1/2 -mt-6 -ml-[1px] w-[2px] h-2 bg-primary/50"></div>
+          <div class="absolute top-1/2 -mt-6 -ml-px w-[2px] h-2 bg-primary/50"></div>
           <!-- Bottom notch -->
-          <div class="absolute top-1/2 mt-4 -ml-[1px] w-[2px] h-2 bg-primary/50"></div>
+          <div class="absolute top-1/2 mt-4 -ml-px w-[2px] h-2 bg-primary/50"></div>
         </div>
         <!-- Scrolling text strip (transform set imperatively) -->
         <div
