@@ -50,6 +50,8 @@ export class RsvpReader extends LitElement {
 	private wasPlayingBeforeSeek = false;
 	private countdownTimer: ReturnType<typeof setTimeout> | null = null;
 	private seekingPointerId: number | null = null;
+	/** Periodic auto-save timer — saves reading position every 15 s while playing. */
+	private _autoSaveTimer: ReturnType<typeof setInterval> | null = null;
 	/** Stores the raw (unprocessed) document text so we can re-tokenize when settings like removeCitations change. */
 	private rawDocText = "";
 
@@ -93,7 +95,7 @@ export class RsvpReader extends LitElement {
 				this.engine.stop();
 				break;
 			case "Escape":
-				this.handleBack();
+				void this.handleBack();
 				break;
 			case "?":
 				this.showShortcuts = !this.showShortcuts;
@@ -167,6 +169,8 @@ export class RsvpReader extends LitElement {
 
 		window.addEventListener("keydown", this.keyHandler);
 		window.addEventListener("resize", this._handleResize);
+		window.addEventListener("beforeunload", this.handleUnload);
+		document.addEventListener("visibilitychange", this.handleVisibilityChange);
 	}
 
 	private async restoreLastDocument() {
@@ -191,12 +195,19 @@ export class RsvpReader extends LitElement {
 
 	override disconnectedCallback(): void {
 		super.disconnectedCallback();
+		this._stopAutoSave();
+		void this.persistProgress(this.engine.getState());
 		this.engine.stop();
 		audioService.stopAmbientNoise();
 		window.removeEventListener("keydown", this.keyHandler);
 		window.removeEventListener("resize", this._handleResize);
 		this._rtlResizeObserver?.disconnect();
 		this._rtlResizeObserver = null;
+		window.removeEventListener("beforeunload", this.handleUnload);
+		document.removeEventListener(
+			"visibilitychange",
+			this.handleVisibilityChange,
+		);
 	}
 
 	protected override updated(
@@ -308,6 +319,8 @@ export class RsvpReader extends LitElement {
 		if (state.playing) {
 			this.engine.pause();
 			audioService.stopAmbientNoise();
+			this._stopAutoSave();
+			void this.persistProgress(this.engine.getState());
 		} else {
 			this.showSettings = false;
 			if (!this.sessionStartTime) {
@@ -332,6 +345,7 @@ export class RsvpReader extends LitElement {
 							this.settings.ambientNoise,
 							this.settings.ambientVolume,
 						);
+						this._startAutoSave();
 					}
 				};
 				this.countdownTimer = setTimeout(tick, 800);
@@ -341,6 +355,7 @@ export class RsvpReader extends LitElement {
 					this.settings.ambientNoise,
 					this.settings.ambientVolume,
 				);
+				this._startAutoSave();
 			}
 		}
 	}
@@ -398,27 +413,54 @@ export class RsvpReader extends LitElement {
 		this.wordsAtSessionStart = state.wordIndex;
 	}
 
-	private handleBack(): void {
+	private async handleBack(): Promise<void> {
 		const state = this.engine.getState();
 		if (state.playing) {
 			this.engine.pause();
 			this.saveSession(state);
 		}
-		this.persistProgress(state);
+		this._stopAutoSave();
+		// Await the DB write so the library page always reads the correct position.
+		await this.persistProgress(state);
 		navigate("app");
 	}
 
-	private persistProgress(state: PlaybackState): void {
+	private async persistProgress(state: PlaybackState): Promise<void> {
 		if (!this.savedDocId || state.totalWords === 0) return;
 		const completionPercent = Math.round(
 			(state.wordIndex / state.totalWords) * 100,
 		);
-		void updateDocumentProgress(
+		await updateDocumentProgress(
 			this.savedDocId,
 			state.wordIndex,
 			completionPercent,
 		);
 	}
+
+	/** Start saving the reading position every 15 seconds while playing. */
+	private _startAutoSave(): void {
+		if (this._autoSaveTimer !== null) return; // already running
+		this._autoSaveTimer = setInterval(() => {
+			void this.persistProgress(this.engine.getState());
+		}, 15_000);
+	}
+
+	/** Clear the auto-save interval. */
+	private _stopAutoSave(): void {
+		if (this._autoSaveTimer === null) return;
+		clearInterval(this._autoSaveTimer);
+		this._autoSaveTimer = null;
+	}
+
+	private handleUnload = (): void => {
+		this.persistProgress(this.engine.getState());
+	};
+
+	private handleVisibilityChange = (): void => {
+		if (document.visibilityState === "hidden") {
+			this.persistProgress(this.engine.getState());
+		}
+	};
 
 	private seekRatioFromPointerEvent(e: PointerEvent): number {
 		const bar = e.currentTarget as HTMLElement;
@@ -473,6 +515,7 @@ export class RsvpReader extends LitElement {
 		this.seekWordIndex = null;
 		this.seekingPointerId = null;
 		this.wasPlayingBeforeSeek = false;
+		this.persistProgress(this.engine.getState());
 	};
 
 	override render() {
@@ -801,6 +844,7 @@ export class RsvpReader extends LitElement {
 								e.stopPropagation();
 								this.engine.seekToWord(idx);
 								this.requestUpdate();
+								this.persistProgress(this.engine.getState());
 							}}
             >${token.text}</span> `,
 					)}
