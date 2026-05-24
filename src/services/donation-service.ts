@@ -7,12 +7,19 @@ export interface DonationWallet {
 }
 
 export interface Supporter {
-	address: string;
+	/** Display name shown on the wall */
 	name: string;
+	/** Amount donated, e.g. "$50" */
 	amount: string;
+	/** Chain/method label shown in the card, e.g. "Wise", "ETH", "BTC" */
 	chain: string;
-	txHash: string;
+	/** On-chain tx hash (crypto only) – omit for fiat/Wise donations */
+	txHash?: string;
 	date: string;
+	/** Optional URL to a profile picture */
+	avatar?: string;
+	/** Wallet/payment address (crypto only) */
+	address?: string;
 }
 
 export const DONATION_WALLETS: DonationWallet[] = [
@@ -59,4 +66,13 @@ export const DONATION_WALLETS: DonationWallet[] = [
 ];
 
 /** Verified supporters; append entries after confirming TX with the donor. */
-export const SUPPORTERS: Supporter[] = [];
+export const SUPPORTERS: Supporter[] = [
+	{
+		name: "Steven C. Matthews",
+		amount: "$50",
+		chain: "Wise",
+		date: "2026-05-24",
+		avatar:
+			"https://lh3.googleusercontent.com/a-/ALV-UjXvrsvcSU_8qGJpRtYzPYgMguSmfd_SimfGWrEgO2g6_TCt1H8=s40-p",
+	},
+];

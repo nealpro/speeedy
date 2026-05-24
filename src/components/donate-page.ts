@@ -268,8 +268,20 @@ export class DonatePage extends LitElement {
           <div class="grid sm:grid-cols-2 gap-3">
             ${SUPPORTERS.map(
 							(s) => html`
-              <div class="rounded-xl border border-base-200 px-4 py-3 flex items-center justify-between gap-3">
-                <div class="flex flex-col min-w-0">
+              <div class="rounded-xl border border-base-200 px-4 py-3 flex items-center gap-3">
+                ${
+									s.avatar
+										? html`<img
+                    src="${s.avatar}"
+                    alt="${s.name}"
+                    class="w-8 h-8 rounded-full shrink-0 object-cover border border-base-200"
+                    referrerpolicy="no-referrer"
+                  />`
+										: html`<div class="w-8 h-8 rounded-full shrink-0 bg-base-200 flex items-center justify-center text-xs font-semibold text-ui-muted">
+                    ${s.name.charAt(0)}
+                  </div>`
+								}
+                <div class="flex flex-col min-w-0 flex-1">
                   <span class="text-sm font-medium text-base-content truncate">${s.name}</span>
                   <span class="text-xs text-ui-muted font-mono">${s.chain} · ${s.amount}</span>
                 </div>
