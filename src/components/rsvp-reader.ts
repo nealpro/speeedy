@@ -12,12 +12,13 @@ import { type PlaybackState, RSVPEngine } from "../services/rsvp-engine.js";
 import { recordSession } from "../services/stats-service.js";
 import {
 	getSavedDocuments,
+	saveDocument,
 	updateDocumentProgress,
 } from "../services/storage-service.js";
 import { applyBionicReading } from "../services/text-parser.js";
 import { applyTheme } from "../services/theme-service.js";
 import { trackEvent, wpmBracket } from "../utils/analytics.js";
-import { emitProfileUpdated, navigate } from "../utils/events.js";
+import { emitProfileUpdated, navigate, showToast } from "../utils/events.js";
 import { stripCitations } from "../utils/text-utils.js";
 import "./settings-panel.ts";
 import "./wellness-overlay.ts";
@@ -110,6 +111,52 @@ export class RsvpReader extends LitElement {
 		}
 	};
 
+	/**
+	 * Intercepts paste events inside the active reader window.
+	 * If the user pastes while not focused in an input/textarea, instantly
+	 * creates a new document, loads it into the reader, and resets progress.
+	 */
+	private handleGlobalPaste = async (e: ClipboardEvent): Promise<void> => {
+		if (
+			e.target instanceof HTMLInputElement ||
+			e.target instanceof HTMLTextAreaElement
+		)
+			return;
+
+		const text = e.clipboardData?.getData("text/plain")?.trim();
+		if (!text) return;
+
+		// Stop active playback
+		const state = this.engine.getState();
+		if (state.playing) {
+			this.engine.pause();
+			audioService.stopAmbientNoise();
+			this._stopAutoSave();
+		}
+
+		const wordCount = text.split(/\s+/).filter(Boolean).length;
+		if (wordCount === 0) return;
+
+		const saved = await saveDocument({
+			title: "Pasted Text",
+			text,
+			wordCount,
+			resumeWordIndex: 0,
+			completionPercent: 0,
+		});
+
+		this.savedDocId = saved.id;
+		this.resumeWordIndex = 0;
+		this.loadDoc({
+			title: saved.title,
+			text: saved.text,
+			wordCount: saved.wordCount,
+		});
+
+		showToast("Text loaded from clipboard ✓", "success");
+		trackEvent("clipboard-paste-reader", { words: wordCount });
+	};
+
 	private emit(type: string, detail: Partial<ReaderSettings>): void {
 		this.handleSettingsChange(
 			new CustomEvent(type, { detail: { ...this.settings, ...detail } }),
@@ -171,6 +218,7 @@ export class RsvpReader extends LitElement {
 		window.addEventListener("resize", this._handleResize);
 		window.addEventListener("beforeunload", this.handleUnload);
 		document.addEventListener("visibilitychange", this.handleVisibilityChange);
+		document.addEventListener("paste", this.handleGlobalPaste);
 	}
 
 	private async restoreLastDocument() {
@@ -208,6 +256,7 @@ export class RsvpReader extends LitElement {
 			"visibilitychange",
 			this.handleVisibilityChange,
 		);
+		document.removeEventListener("paste", this.handleGlobalPaste);
 	}
 
 	protected override updated(

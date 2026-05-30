@@ -1,6 +1,6 @@
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { BookOpen, Clock, Edit2, Play, Trash2 } from "lucide";
+import { BookOpen, Clipboard, Clock, Edit2, Play, Trash2 } from "lucide";
 import type {
 	ParsedDocument,
 	SavedDocument,
@@ -66,12 +66,69 @@ export class AppPage extends LitElement {
 			this.customTitle = "Demo: The Science of Speed Reading";
 			this.inputTab = "text";
 		}
+
+		document.addEventListener("paste", this.handleGlobalPaste);
+	}
+
+	override disconnectedCallback(): void {
+		super.disconnectedCallback();
+		document.removeEventListener("paste", this.handleGlobalPaste);
 	}
 
 	private dismissWelcome(): void {
 		localStorage.setItem(AppPage.WELCOME_DISMISSED_KEY, "1");
 		this.welcomeDismissed = true;
 	}
+
+	/**
+	 * Intercepts Ctrl+V / Cmd+V anywhere on the page.
+	 * If the paste doesn't land inside a real text field, auto-load
+	 * the pasted content into the reader textarea and switch to the text tab.
+	 */
+	private handleGlobalPaste = (e: ClipboardEvent): void => {
+		// Let the browser handle paste that lands in a real input/textarea.
+		if (
+			e.target instanceof HTMLInputElement ||
+			e.target instanceof HTMLTextAreaElement
+		)
+			return;
+
+		const text = e.clipboardData?.getData("text/plain")?.trim();
+		if (!text) return;
+
+		this.pastedText = text;
+		this.loadedDocTitle = "";
+		this.loadedDocText = "";
+		this.customTitle = "";
+		this.inputTab = "text";
+		this.error = "";
+		showToast("Text loaded from clipboard ✓", "success");
+		trackEvent("clipboard-paste", { words: text.split(/\s+/).length });
+	};
+
+	/**
+	 * Explicit clipboard read via the Clipboard API button.
+	 * Prompts the browser for clipboard-read permission if needed.
+	 */
+	private pasteFromClipboard = async (): Promise<void> => {
+		try {
+			const text = await navigator.clipboard.readText();
+			if (!text.trim()) {
+				showToast("Clipboard is empty", "error");
+				return;
+			}
+			this.pastedText = text.trim();
+			this.loadedDocTitle = "";
+			this.loadedDocText = "";
+			this.customTitle = "";
+			this.error = "";
+			showToast("Clipboard loaded ✓", "success");
+			trackEvent("clipboard-paste", { words: text.trim().split(/\s+/).length });
+		} catch {
+			// Permission denied or clipboard unavailable — fail silently.
+			showToast("Could not read clipboard — try Ctrl+V instead", "error");
+		}
+	};
 
 	private handleFileParsed = (
 		e: CustomEvent<{ doc: ParsedDocument }>,
@@ -363,16 +420,26 @@ export class AppPage extends LitElement {
         ${
 					!this.pastedText
 						? html`
-          <button
-            class="btn btn-outline btn-sm w-full gap-2 border-dashed"
-            @click=${this.loadDemoText}
-          >
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z"/>
-            </svg>
-            Try a demo text
-          </button>
+          <div class="flex gap-2">
+            <button
+              class="btn btn-outline btn-sm flex-1 gap-2 border-dashed"
+              @click=${this.loadDemoText}
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+              Try a demo
+            </button>
+            <button
+              class="btn btn-outline btn-sm gap-2 border-dashed"
+              title="Load text from clipboard"
+              @click=${() => void this.pasteFromClipboard()}
+            >
+              ${icon(Clipboard, "w-3.5 h-3.5")}
+              Paste clipboard
+            </button>
+          </div>
         `
 						: ""
 				}
