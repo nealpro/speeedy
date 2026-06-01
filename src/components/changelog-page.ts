@@ -13,6 +13,19 @@ interface Release {
 
 const RELEASES: Release[] = [
 	{
+		version: "1.2.0",
+		date: "2026-05-30",
+		sections: [
+			{
+				title: "Added",
+				items: [
+					"Clipboard auto-load — paste text (Ctrl+V / Cmd+V) anywhere on the app to instantly load it into the reader. In the main page, it populates the text field; in the active reader, it stops playback and loads a new document.",
+					'"Paste clipboard" button — one-click button in the text input tab to pull text directly using the browser\'s Clipboard API.',
+				],
+			},
+		],
+	},
+	{
 		version: "1.1.0",
 		date: "2026-05-06",
 		sections: [
