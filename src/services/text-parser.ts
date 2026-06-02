@@ -1,5 +1,30 @@
+import type JSZip from "jszip";
 import type { ParsedDocument } from "../models/types.js";
 import { countWords, htmlToPlainText } from "../utils/text-utils.js";
+
+type JSZipStatic = typeof JSZip;
+
+async function loadJSZip(): Promise<JSZipStatic> {
+	const mod = await import("jszip");
+	const JSZip =
+		mod.default ??
+		(mod as { t?: JSZipStatic }).t ??
+		(mod as unknown as JSZipStatic);
+
+	if (typeof JSZip?.loadAsync !== "function") {
+		throw new Error(
+			"Could not load the file parser. Please refresh the page and try again.",
+		);
+	}
+
+	return JSZip;
+}
+
+function getElementsByLocalName(doc: Document, name: string): Element[] {
+	const nsMatches = doc.getElementsByTagNameNS("*", name);
+	if (nsMatches.length > 0) return Array.from(nsMatches);
+	return Array.from(doc.getElementsByTagName(name));
+}
 
 export async function parseFile(file: File): Promise<ParsedDocument> {
 	const ext = file.name.split(".").pop()?.toLowerCase();
@@ -234,7 +259,7 @@ async function parseCsv(file: File): Promise<ParsedDocument> {
 }
 
 async function parseOdt(file: File): Promise<ParsedDocument> {
-	const { default: JSZip } = await import("jszip");
+	const JSZip = await loadJSZip();
 	let zip: import("jszip");
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
@@ -255,7 +280,7 @@ async function parseOdt(file: File): Promise<ParsedDocument> {
 }
 
 async function parseEpub(file: File): Promise<ParsedDocument> {
-	const { default: JSZip } = await import("jszip");
+	const JSZip = await loadJSZip();
 	let zip: import("jszip");
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
@@ -311,7 +336,10 @@ async function findOpfFile(zip: import("jszip")) {
 	const containerContent = await containerFile.async("string");
 	const parser = new DOMParser();
 	const containerDoc = parser.parseFromString(containerContent, "text/xml");
-	const rootFile = containerDoc.querySelector("rootfile");
+	const rootFile =
+		containerDoc.querySelector("rootfile") ??
+		getElementsByLocalName(containerDoc, "rootfile")[0] ??
+		null;
 	const fullPath = rootFile?.getAttribute("full-path");
 
 	return fullPath ? zip.file(fullPath) : null;
@@ -319,10 +347,9 @@ async function findOpfFile(zip: import("jszip")) {
 
 function extractManifestFromDoc(doc: Document): Record<string, string> {
 	const manifestItems: Record<string, string> = {};
-	const items = doc.getElementsByTagName("item");
-	for (let i = 0; i < items.length; i++) {
-		const id = items[i].getAttribute("id");
-		const href = items[i].getAttribute("href");
+	for (const item of getElementsByLocalName(doc, "item")) {
+		const id = item.getAttribute("id");
+		const href = item.getAttribute("href");
 		if (id && href) manifestItems[id] = href;
 	}
 	return manifestItems;
@@ -330,18 +357,19 @@ function extractManifestFromDoc(doc: Document): Record<string, string> {
 
 function extractSpineFromDoc(doc: Document): string[] {
 	const spineItems: string[] = [];
-	const itemrefs = doc.getElementsByTagName("itemref");
-	for (let i = 0; i < itemrefs.length; i++) {
-		const idref = itemrefs[i].getAttribute("idref");
+	for (const itemref of getElementsByLocalName(doc, "itemref")) {
+		const idref = itemref.getAttribute("idref");
 		if (idref) spineItems.push(idref);
 	}
 	return spineItems;
 }
 
 function extractEpubTitleFromDoc(doc: Document): string | null {
-	const titleEl =
-		doc.getElementsByTagName("dc:title")[0] ??
-		doc.getElementsByTagName("title")[0];
+	const titles = getElementsByLocalName(doc, "title");
+	const dcTitle = titles.find(
+		(el) => el.namespaceURI === "http://purl.org/dc/elements/1.1/",
+	);
+	const titleEl = dcTitle ?? titles[0];
 	return titleEl?.textContent?.trim() ?? null;
 }
 
