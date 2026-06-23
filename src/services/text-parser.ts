@@ -1,6 +1,24 @@
-import JSZip from "jszip";
+import type JSZip from "jszip";
 import type { ParsedDocument } from "../models/types.js";
 import { countWords, htmlToPlainText } from "../utils/text-utils.js";
+
+type JSZipStatic = typeof JSZip;
+
+async function loadJSZip(): Promise<JSZipStatic> {
+	const mod = await import("jszip");
+	const JSZip =
+		mod.default ??
+		(mod as { t?: JSZipStatic }).t ??
+		(mod as unknown as JSZipStatic);
+
+	if (typeof JSZip?.loadAsync !== "function") {
+		throw new Error(
+			"Could not load the file parser. Please refresh the page and try again.",
+		);
+	}
+
+	return JSZip;
+}
 
 function getElementsByLocalName(doc: Document, name: string): Element[] {
 	const nsMatches = doc.getElementsByTagNameNS("*", name);
@@ -291,7 +309,8 @@ async function parseCsv(file: File): Promise<ParsedDocument> {
 }
 
 async function parseOdt(file: File): Promise<ParsedDocument> {
-	let zip: JSZip;
+	const JSZip = await loadJSZip();
+	let zip: import("jszip");
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
 	} catch {
@@ -311,7 +330,8 @@ async function parseOdt(file: File): Promise<ParsedDocument> {
 }
 
 async function parseEpub(file: File): Promise<ParsedDocument> {
-	let zip: JSZip;
+	const JSZip = await loadJSZip();
+	let zip: import("jszip");
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
 	} catch {
