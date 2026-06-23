@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applyBionicReading, createDocFromText } from "./text-parser.js";
+import {
+	applyBionicReading,
+	createDocFromText,
+	parseFile,
+} from "./text-parser.js";
 
 describe("applyBionicReading", () => {
 	it("wraps the first ~40% of each word in bold tags", () => {
@@ -60,6 +66,23 @@ describe("applyBionicReading", () => {
 	it("escapes quotes", () => {
 		const result = applyBionicReading('say"hi"');
 		expect(result).toContain("&quot;");
+	});
+});
+
+describe("parseFile (EPUB)", () => {
+	it("extracts text and title from a valid EPUB", async () => {
+		const buffer = readFileSync(
+			join(import.meta.dirname, "../../test-fixtures/sample.epub"),
+		);
+		const file = new File([buffer], "sample.epub", {
+			type: "application/epub+zip",
+		});
+
+		const doc = await parseFile(file);
+
+		expect(doc.title).toBe("Test Book");
+		expect(doc.text).toContain("Hello EPUB world");
+		expect(doc.wordCount).toBeGreaterThan(0);
 	});
 });
 

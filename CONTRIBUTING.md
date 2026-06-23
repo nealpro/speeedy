@@ -96,3 +96,11 @@ This project follows [Semantic Versioning](https://semver.org):
 - **PATCH** — Bug fixes
 
 When contributing a change that warrants a version bump, update [CHANGELOG.md](CHANGELOG.md) under an `[Unreleased]` section. The maintainer will assign the version number at release time.
+
+## Releasing
+
+1. Bump `package.json`, update `CHANGELOG.md`, and update `src/components/changelog-page.ts`.
+2. Commit to `main` with a message like `release: v1.3.0 - short description`.
+3. GitHub Actions creates the `v1.3.0` tag and publishes the release using the matching changelog section.
+
+To backfill a release that was committed but never published, run the **Release** workflow manually from the Actions tab and enter the version (e.g. `1.2.0`).

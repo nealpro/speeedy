@@ -11,7 +11,7 @@ export default defineConfig({
 			manifest: false,
 			workbox: {
 				// Cache app shell and all static assets
-				globPatterns: ["**/*.{js,css,html,svg,woff2}"],
+				globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
 				// Large PDF/DOCX/EPUB chunks are lazy-loaded; cache them separately
 				maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
 			},

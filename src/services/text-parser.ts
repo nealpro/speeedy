@@ -1,5 +1,62 @@
+import JSZip from "jszip";
 import type { ParsedDocument } from "../models/types.js";
 import { countWords, htmlToPlainText } from "../utils/text-utils.js";
+
+function getElementsByLocalName(doc: Document, name: string): Element[] {
+	const nsMatches = doc.getElementsByTagNameNS("*", name);
+	if (nsMatches.length > 0) return Array.from(nsMatches);
+	return Array.from(doc.getElementsByTagName(name));
+}
+
+function normalizeEpubPath(path: string): string {
+	const parts = path.split("/");
+	const stack: string[] = [];
+	for (const part of parts) {
+		if (part === "." || !part) continue;
+		if (part === "..") {
+			stack.pop();
+		} else {
+			stack.push(part);
+		}
+	}
+	return stack.join("/");
+}
+
+function stripHrefFragment(href: string): string {
+	const hash = href.indexOf("#");
+	return hash >= 0 ? href.slice(0, hash) : href;
+}
+
+function findZipEntry(zip: JSZip, path: string): JSZip.JSZipObject | null {
+	const candidates = new Set<string>();
+	const add = (value: string) => {
+		if (!value) return;
+		candidates.add(value);
+		candidates.add(normalizeEpubPath(value));
+	};
+
+	add(path);
+	try {
+		add(decodeURIComponent(path));
+	} catch {
+		/* malformed % sequences */
+	}
+
+	for (const candidate of candidates) {
+		const entry = zip.file(candidate);
+		if (entry) return entry;
+	}
+
+	const target = normalizeEpubPath(path).toLowerCase();
+	let match: JSZip.JSZipObject | null = null;
+	zip.forEach((relativePath, file) => {
+		if (match) return;
+		if (normalizeEpubPath(relativePath).toLowerCase() === target) {
+			match = file;
+		}
+	});
+	return match;
+}
 
 export async function parseFile(file: File): Promise<ParsedDocument> {
 	const ext = file.name.split(".").pop()?.toLowerCase();
@@ -234,8 +291,7 @@ async function parseCsv(file: File): Promise<ParsedDocument> {
 }
 
 async function parseOdt(file: File): Promise<ParsedDocument> {
-	const { default: JSZip } = await import("jszip");
-	let zip: import("jszip");
+	let zip: JSZip;
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
 	} catch {
@@ -255,8 +311,7 @@ async function parseOdt(file: File): Promise<ParsedDocument> {
 }
 
 async function parseEpub(file: File): Promise<ParsedDocument> {
-	const { default: JSZip } = await import("jszip");
-	let zip: import("jszip");
+	let zip: JSZip;
 	try {
 		zip = await JSZip.loadAsync(await file.arrayBuffer());
 	} catch {
@@ -280,13 +335,11 @@ async function parseEpub(file: File): Promise<ParsedDocument> {
 
 	const parts: string[] = [];
 	for (const idref of spineItems) {
-		const href = manifestMap[idref];
+		const href = stripHrefFragment(manifestMap[idref]);
 		if (!href) continue;
 
 		const fullPath = basePath + href;
-		const normalizedPath = normalizeEpubPath(fullPath);
-
-		const entry = zip.file(normalizedPath) ?? zip.file(href);
+		const entry = findZipEntry(zip, fullPath) ?? findZipEntry(zip, href);
 		if (!entry) continue;
 
 		const html = await entry.async("string");
@@ -304,25 +357,27 @@ async function parseEpub(file: File): Promise<ParsedDocument> {
 	return { title, text, wordCount: countWords(text) };
 }
 
-async function findOpfFile(zip: import("jszip")) {
-	const containerFile = zip.file("META-INF/container.xml");
+async function findOpfFile(zip: JSZip) {
+	const containerFile = findZipEntry(zip, "META-INF/container.xml");
 	if (!containerFile) return null;
 
 	const containerContent = await containerFile.async("string");
 	const parser = new DOMParser();
 	const containerDoc = parser.parseFromString(containerContent, "text/xml");
-	const rootFile = containerDoc.querySelector("rootfile");
+	const rootFile =
+		containerDoc.querySelector("rootfile") ??
+		getElementsByLocalName(containerDoc, "rootfile")[0] ??
+		null;
 	const fullPath = rootFile?.getAttribute("full-path");
 
-	return fullPath ? zip.file(fullPath) : null;
+	return fullPath ? findZipEntry(zip, fullPath) : null;
 }
 
 function extractManifestFromDoc(doc: Document): Record<string, string> {
 	const manifestItems: Record<string, string> = {};
-	const items = doc.getElementsByTagName("item");
-	for (let i = 0; i < items.length; i++) {
-		const id = items[i].getAttribute("id");
-		const href = items[i].getAttribute("href");
+	for (const item of getElementsByLocalName(doc, "item")) {
+		const id = item.getAttribute("id");
+		const href = item.getAttribute("href");
 		if (id && href) manifestItems[id] = href;
 	}
 	return manifestItems;
@@ -330,33 +385,20 @@ function extractManifestFromDoc(doc: Document): Record<string, string> {
 
 function extractSpineFromDoc(doc: Document): string[] {
 	const spineItems: string[] = [];
-	const itemrefs = doc.getElementsByTagName("itemref");
-	for (let i = 0; i < itemrefs.length; i++) {
-		const idref = itemrefs[i].getAttribute("idref");
+	for (const itemref of getElementsByLocalName(doc, "itemref")) {
+		const idref = itemref.getAttribute("idref");
 		if (idref) spineItems.push(idref);
 	}
 	return spineItems;
 }
 
 function extractEpubTitleFromDoc(doc: Document): string | null {
-	const titleEl =
-		doc.getElementsByTagName("dc:title")[0] ??
-		doc.getElementsByTagName("title")[0];
+	const titles = getElementsByLocalName(doc, "title");
+	const dcTitle = titles.find(
+		(el) => el.namespaceURI === "http://purl.org/dc/elements/1.1/",
+	);
+	const titleEl = dcTitle ?? titles[0];
 	return titleEl?.textContent?.trim() ?? null;
-}
-
-function normalizeEpubPath(path: string): string {
-	const parts = path.split("/");
-	const stack: string[] = [];
-	for (const part of parts) {
-		if (part === "." || !part) continue;
-		if (part === "..") {
-			stack.pop();
-		} else {
-			stack.push(part);
-		}
-	}
-	return stack.join("/");
 }
 
 function cleanText(text: string): string {

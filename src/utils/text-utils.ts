@@ -1,20 +1,31 @@
+function countWordsByWhitespace(text: string): number {
+	return text
+		.trim()
+		.split(/\s+/)
+		.filter((w) => w.length > 0).length;
+}
+
 /** Word count: Intl.Segmenter when available, else whitespace split. */
 export function countWords(text: string): number {
 	if (!text.trim()) return 0;
 
 	if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
-		const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
-		let total = 0;
-		for (const seg of segmenter.segment(text)) {
-			if (seg.isWordLike) total++;
+		try {
+			const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+			if (typeof segmenter.segment !== "function") {
+				return countWordsByWhitespace(text);
+			}
+			let total = 0;
+			for (const seg of segmenter.segment(text)) {
+				if (seg.isWordLike) total++;
+			}
+			return total;
+		} catch {
+			return countWordsByWhitespace(text);
 		}
-		return total;
 	}
 
-	return text
-		.trim()
-		.split(/\s+/)
-		.filter((w) => w.length > 0).length;
+	return countWordsByWhitespace(text);
 }
 
 /** Minutes to read at WPM, ×1.3 for pauses. */
