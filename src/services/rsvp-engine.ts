@@ -1,6 +1,7 @@
 import type { OrpResult, ReaderSettings } from "../models/types.js";
 
 const COMMON_WORDS = new Set([
+	// English
 	"the",
 	"a",
 	"an",
@@ -30,6 +31,145 @@ const COMMON_WORDS = new Set([
 	"he",
 	"she",
 	"they",
+	// Polish
+	"i",
+	"w",
+	"z",
+	"na",
+	"jest",
+	"się",
+	"nie",
+	"że",
+	"do",
+	"od",
+	"a",
+	"o",
+	"dla",
+	"co",
+	"jak",
+	"ale",
+	"za",
+	"ze",
+	"tego",
+	"tej",
+	"ten",
+	"ta",
+	"to",
+	// Czech
+	"a",
+	"v",
+	"na",
+	"je",
+	"se",
+	"že",
+	"s",
+	"z",
+	"do",
+	"o",
+	"ale",
+	"za",
+	"co",
+	"jak",
+	"ve",
+	"pro",
+	"k",
+	"ze",
+	"ve",
+	"ten",
+	"ta",
+	"to",
+	// Slovak
+	"a",
+	"v",
+	"na",
+	"je",
+	"sa",
+	"že",
+	"s",
+	"z",
+	"do",
+	"o",
+	"ale",
+	"za",
+	"čo",
+	"ako",
+	"ve",
+	"pre",
+	"k",
+	"ze",
+	"ten",
+	"tá",
+	"to",
+	// Serbo-Croatian (Latin & Cyrillic)
+	"i",
+	"u",
+	"se",
+	"na",
+	"je",
+	"za",
+	"sa",
+	"kao",
+	"a",
+	"o",
+	"od",
+	"do",
+	"što",
+	"ali",
+	"iz",
+	"pa",
+	"čak",
+	"te",
+	"će",
+	"ovo",
+	"он",
+	"она",
+	"оно",
+	"и",
+	"у",
+	"се",
+	"на",
+	"је",
+	// Slovene
+	"je",
+	"v",
+	"in",
+	"se",
+	"na",
+	"za",
+	"s",
+	"z",
+	"ki",
+	"od",
+	"do",
+	"pa",
+	"toda",
+	"ali",
+	"kaj",
+	"kot",
+	"kako",
+	"ta",
+	"to",
+	"tega",
+	// Bulgarian (Cyrillic)
+	"и",
+	"в",
+	"на",
+	"се",
+	"е",
+	"да",
+	"с",
+	"за",
+	"не",
+	"от",
+	"като",
+	"а",
+	"о",
+	"това",
+	"тази",
+	"този",
+	"което",
+	"който",
+	"която",
 ]);
 
 export interface TokenContext {
@@ -406,7 +546,18 @@ function assignQuoteParenContext(
 			}
 			inWord = false;
 		} else {
+			// Standard ASCII quotes
 			if (c === '"') {
+				inDoubleQuote = !inDoubleQuote;
+			}
+			// Slavic/European quotation marks: "..." (Polish/Czech/Slovak), »...« (Slovene), "..." (German style)
+			// Using Unicode: \u201E (low-9), \u201D (high-9), \u00AB (guillemet left), \u00BB (guillemet right)
+			else if (
+				c === "\u201E" ||
+				c === "\u201D" ||
+				c === "\u00AB" ||
+				c === "\u00BB"
+			) {
 				inDoubleQuote = !inDoubleQuote;
 			} else if (c === "'") {
 				const prev = i > 0 ? normalizedText[i - 1] : "";
@@ -419,6 +570,11 @@ function assignQuoteParenContext(
 				} else if (!isWordBefore && isWordAfter) {
 					inSingleQuote = true;
 				}
+			}
+			// Single guillemets ‹...› used in some European languages
+			// \u2039 = single left guillemet, \u203A = single right guillemet
+			else if (c === "\u2039" || c === "\u203A") {
+				inSingleQuote = !inSingleQuote;
 			} else if (c === "(") parenDepth++;
 			else if (c === ")") parenDepth--;
 			else if (c === "[") bracketDepth++;
@@ -441,7 +597,15 @@ function assignQuoteParenContext(
 
 function closesAsideFromToken(t: WordToken): void {
 	const text = t.text.trim();
-	const closesAside = /[)"'\]]$/.test(text) || /[)"'\]][,.;]$/.test(text);
+	// Include Slavic/European closing marks using Unicode escapes
+	// \u201D = right double quote, \u201E = left double quote, \u00BB = right guillemet,
+	// \u00AB = left guillemet, \u203A = single right guillemet, \u2039 = single left guillemet
+	const slavicClosers = "\u201D\u201E\u00BB\u00AB\u203A\u2039";
+	const closesAside =
+		/[)"'\]]$/.test(text) ||
+		new RegExp(`[)"']][${slavicClosers}]$`).test(text) ||
+		/[)"'\]][,.;!?]$/.test(text) ||
+		new RegExp(`[)"']][${slavicClosers}][,.;!?]$`).test(text);
 	if (closesAside) {
 		t.context = t.context ?? {};
 		t.context.closesAside = true;
@@ -450,9 +614,31 @@ function closesAsideFromToken(t: WordToken): void {
 
 function getPauseMultiplier(word: string, commaAsPause = false): number {
 	const last = word[word.length - 1];
+
+	// Standard Western punctuation
 	if (last === "." || last === "!" || last === "?") return 2.0;
 	if (last === "," || last === ";") return commaAsPause ? 2.0 : 1.4;
 	if (last === ":") return 1.4;
+
+	// Slavic and European quotation marks (may appear at end of words)
+	// Polish "..." low-9 high-9 quotes, Slovene »...« guillemets
+	// \u201E = low-9 quote, \u201D = high-9 quote, \u00BB = right guillemet, \u203A = single right guillemet
+	if (
+		last === "\u201E" ||
+		last === "\u201D" ||
+		last === "\u00BB" ||
+		last === "\u203A"
+	)
+		return 2.0;
+
+	// CJK full-width punctuation
+	if (last === "。" || last === "！" || last === "？") return 2.0;
+	if (last === "，" || last === "；") return commaAsPause ? 2.0 : 1.4;
+	if (last === "：") return 1.4;
+
+	// Arabic/Hebrew question marks (RTL languages)
+	if (last === "؟") return 2.0;
+
 	return 1.0;
 }
 

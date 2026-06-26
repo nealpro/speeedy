@@ -153,6 +153,18 @@ export class SettingsPanel extends LitElement {
           ></speeedy-range>
         </section>
 
+        <!-- Words per flash -->
+        <section class="pb-6">
+          <span class="text-xs uppercase tracking-widest text-ui-muted block mb-2">Words per flash</span>
+          <speeedy-segmented
+            group-label="Words per flash"
+            .options=${[1, 2, 3, 4, 5].map((n) => ({ value: n, label: n === 1 ? "1 word" : `${n} words` }))}
+            .value=${s.chunkSize}
+            tip="Number of words displayed in each flash. More words = faster reading but may reduce comprehension."
+            @change=${(e: CustomEvent) => this.emit({ chunkSize: e.detail.value })}
+          ></speeedy-segmented>
+        </section>
+
         <!-- Advanced timing -->
         <section class="border-t border-base-200 pt-6 pb-2" aria-labelledby="settings-advanced-heading">
           <h2 id="settings-advanced-heading" class="text-xs uppercase tracking-widest text-ui-muted font-medium mb-4">
