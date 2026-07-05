@@ -13,6 +13,19 @@ interface Release {
 
 const RELEASES: Release[] = [
 	{
+		version: "1.3.0",
+		date: "2026-06-26",
+		sections: [
+			{
+				title: "Added",
+				items: [
+					'Words per flash control — configure how many words appear in each RSVP flash (1–5). Find it in Settings under "Words per flash".',
+					"West and South Slavic language support — improved smart speed timing and punctuation detection for Polish, Czech, Slovak, Serbo-Croatian, Slovene, and Bulgarian text.",
+				],
+			},
+		],
+	},
+	{
 		version: "1.2.0",
 		date: "2026-05-30",
 		sections: [

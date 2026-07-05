@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-26
+
+### Added
+- **Words per flash control** — configure how many words appear in each RSVP flash (1–5). Find it in Settings under "Words per flash".
+- **West and South Slavic language support** — improved smart speed timing and punctuation detection for Polish, Czech, Slovak, Serbo-Croatian, Slovene, and Bulgarian text.
+
 ## [1.2.0] - 2026-05-30
 
 ### Added
@@ -63,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Donation and support page with crypto wallets, QR codes, and supporters wall
 - In-app changelog
 
+[1.3.0]: https://github.com/sami-29/speeedy/releases/tag/v1.3.0
 [1.2.0]: https://github.com/sami-29/speeedy/releases/tag/v1.2.0
 [1.1.0]: https://github.com/sami-29/speeedy/releases/tag/v1.1.0
 [1.0.0]: https://github.com/sami-29/speeedy/releases/tag/v1.0.0

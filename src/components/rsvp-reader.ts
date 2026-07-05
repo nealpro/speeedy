@@ -82,7 +82,7 @@ export class RsvpReader extends LitElement {
 				break;
 			case "ArrowLeft":
 				this.emit("settings-change", {
-					wpm: Math.max(100, this.settings.wpm - 25),
+					wpm: Math.max(50, this.settings.wpm - 25),
 				});
 				break;
 			case "ArrowUp":
@@ -1336,7 +1336,7 @@ export class RsvpReader extends LitElement {
           <button
             type="button"
             class="btn btn-ghost btn-sm min-h-[44px] min-w-[44px] touch-manipulation"
-            @click=${() => this.emit("settings-change", { wpm: Math.max(100, wpm - 25) })}
+            @click=${() => this.emit("settings-change", { wpm: Math.max(50, wpm - 25) })}
           >−</button>
           <div class="flex flex-col items-center w-14 md:w-16">
             <span class="font-mono text-sm md:text-base font-medium leading-none">${wpm}</span>

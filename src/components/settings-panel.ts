@@ -105,10 +105,10 @@ export class SettingsPanel extends LitElement {
         <section class="pb-6">
           <speeedy-range
             label="Speed"
-            min="100" max="1600" step="25"
+            min="50" max="1600" step="25"
             .value=${s.wpm}
             unit=" WPM"
-            min-label="100"
+            min-label="50"
             max-label="1600"
             @change=${(e: CustomEvent) => this.emit({ wpm: e.detail.value })}
           ></speeedy-range>
@@ -205,11 +205,11 @@ export class SettingsPanel extends LitElement {
 									? html`
                 <speeedy-range
                   label="Target WPM"
-                  min="100" max="1600" step="25"
+                  min="50" max="1600" step="25"
                   .value=${s.speedRampTarget}
                   unit=" WPM"
                   color="secondary"
-                  min-label="100"
+                  min-label="50"
                   max-label="1600"
                   @change=${(e: CustomEvent) => this.emit({ speedRampTarget: e.detail.value })}
                 ></speeedy-range>

@@ -727,8 +727,8 @@ function smartWpm(base: number, word: string): number {
 	const isCommon = COMMON_WORDS.has(clean.toLowerCase());
 
 	if (isCommon || len <= 3) return Math.min(base * 1.3, 1600);
-	if (len >= 8) return Math.max(base * 0.75, 100);
-	if (len >= 6) return Math.max(base * 0.9, 100);
+	if (len >= 8) return Math.max(base * 0.75, 50);
+	if (len >= 6) return Math.max(base * 0.9, 50);
 	return base;
 }
 
