@@ -1,6 +1,7 @@
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
+import { Zap } from "lucide";
 import type { UserProfile } from "../models/types.js";
 import { DEFAULT_SETTINGS } from "../services/defaults.js";
 import { type PlaybackState, RSVPEngine } from "../services/rsvp-engine.js";
@@ -8,6 +9,7 @@ import { saveProfile } from "../services/storage-service.js";
 import { applyBionicReading } from "../services/text-parser.js";
 import { trackEvent } from "../utils/analytics.js";
 import { emitProfileUpdated } from "../utils/events.js";
+import { icon } from "../utils/icons.js";
 import "./ui/dialog.js";
 
 const PREVIEW_TEXT =
@@ -88,7 +90,7 @@ export class OnboardingModal extends LitElement {
 	}
 
 	private renderPreviewWord() {
-		if (!this.demoState || !this.demoState.currentOrp) {
+		if (!this.demoState?.currentOrp) {
 			return html`<span class="text-base-content/20">…</span>`;
 		}
 
@@ -149,12 +151,29 @@ export class OnboardingModal extends LitElement {
 		});
 	}
 
+	private skip = (): void => {
+		const updated: UserProfile = { ...this.profile, onboardingSeen: true };
+		trackEvent("onboarding-skipped", { step: this.step });
+		saveProfile(updated).then(() => {
+			emitProfileUpdated(updated);
+			this.isOpen = false;
+		});
+	};
+
 	override render() {
 		return html`
       <speeedy-dialog .open=${this.isOpen} .dismissible=${false}>
         <!-- Modal Card -->
-        <div class="w-[min(32rem,calc(100vw-2rem))] bg-base-100 rounded-3xl shadow-2xl overflow-hidden border border-base-200 animate-in zoom-in-95 fade-in duration-500">
-          
+        <div class="relative w-[min(32rem,calc(100vw-2rem))] bg-base-100 rounded-3xl shadow-2xl overflow-hidden border border-base-200 animate-in zoom-in-95 fade-in duration-500">
+
+          <button
+            class="absolute top-4 right-4 text-xs text-base-content/40 hover:text-base-content/70 transition-colors z-10"
+            data-umami-event="onboarding-skip"
+            @click=${this.skip}
+          >
+            Skip
+          </button>
+
           <div class="p-8 sm:p-10 flex flex-col items-center text-center">
             ${this.renderStep()}
           </div>
@@ -174,8 +193,8 @@ export class OnboardingModal extends LitElement {
 		switch (this.step) {
 			case "welcome":
 				return html`
-          <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 text-4xl shadow-inner border border-primary/20">
-            ⚡
+          <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 shadow-inner border border-primary/20">
+            ${icon(Zap, "w-9 h-9 text-primary")}
           </div>
           <h2 class="text-3xl font-semibold mb-3 tracking-tight">Welcome to Speeedy</h2>
           <p class="text-base-content/60 font-light leading-relaxed mb-8">

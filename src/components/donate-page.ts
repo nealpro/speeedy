@@ -1,10 +1,28 @@
 import { html, LitElement } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { Check, Copy, ExternalLink, Heart, Star } from "lucide";
+import {
+	Check,
+	Coffee,
+	Copy,
+	CreditCard,
+	ExternalLink,
+	Heart,
+	Star,
+} from "lucide";
 import QRCode from "qrcode";
-import { DONATION_WALLETS, SUPPORTERS } from "../services/donation-service.js";
+import {
+	DONATION_LINKS,
+	DONATION_WALLETS,
+	type DonationLink,
+	SUPPORTERS,
+} from "../services/donation-service.js";
 import { icon } from "../utils/icons.js";
 import "./ui/page-nav.js";
+
+const DONATION_LINK_ICONS = {
+	Coffee,
+	CreditCard,
+} as const;
 
 const BOUNTIES = [
 	{
@@ -81,6 +99,13 @@ export class DonatePage extends LitElement {
             </p>
           </div>
 
+          <div class="flex flex-col gap-3">
+            <p class="text-xs tracking-[0.5em] uppercase text-ui-muted-subtle font-medium">Quick support</p>
+            <div class="grid sm:grid-cols-3 gap-3">
+              ${DONATION_LINKS.map((l) => this.renderDonationLink(l))}
+            </div>
+          </div>
+
           <!-- Crypto donations (primary, open) -->
           <div class="flex flex-col gap-3">
             <p class="text-xs tracking-[0.5em] uppercase text-ui-muted-subtle font-medium">Crypto donation</p>
@@ -99,7 +124,7 @@ export class DonatePage extends LitElement {
               <span class="text-xs text-ui-muted-subtle font-light">Get in touch</span>
             </div>
             <p class="text-sm text-ui-muted font-light leading-relaxed">
-              Prefer a bank transfer, PayPal, or another method? Send an email and we can sort it out.
+              Prefer a bank transfer or another method not listed above? Send an email and we can sort it out.
             </p>
             <a
               href="mailto:sami.bentaleb.dev@gmail.com?subject=Speeedy%20Support"
@@ -193,6 +218,25 @@ export class DonatePage extends LitElement {
           ${icon(Heart, "w-3.5 h-3.5")} Email about funding a feature
         </a>
       </div>
+    `;
+	}
+
+	private renderDonationLink(l: DonationLink) {
+		return html`
+      <a
+        href="${l.url}"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="border border-base-200 rounded-xl p-4 flex flex-col gap-2 hover:border-primary/40 hover:bg-base-200/30 transition-colors"
+        data-umami-event="donate-quick-link-click"
+        data-umami-event-platform="${l.id}"
+      >
+        <div class="flex items-center gap-2">
+          ${icon(DONATION_LINK_ICONS[l.icon], "w-4 h-4 text-primary shrink-0")}
+          <span class="text-sm font-medium text-base-content">${l.label}</span>
+        </div>
+        <p class="text-xs text-ui-muted font-light leading-relaxed">${l.description}</p>
+      </a>
     `;
 	}
 

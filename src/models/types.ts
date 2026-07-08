@@ -145,6 +145,8 @@ export interface UserProfile {
 	baselineComprehension: number | null;
 	onboardingSeen: boolean;
 	githubStarPromptDismissed?: boolean;
+	donationNudgeDismissedAt?: string | null;
+	donationNudgeDismissedAtSessionCount?: number;
 }
 
 export interface ParsedDocument {

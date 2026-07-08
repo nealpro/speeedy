@@ -89,6 +89,15 @@ export function getTodayWords(profile: UserProfile): number {
 		.reduce((sum, s) => sum + s.wordsRead, 0);
 }
 
+const AVERAGE_HUMAN_WPM = 238;
+
+export function getTimeSavedMs(profile: UserProfile): number {
+	if (profile.totalWordsRead <= 0) return 0;
+	const timeAtAveragePaceMs =
+		(profile.totalWordsRead / AVERAGE_HUMAN_WPM) * 60_000;
+	return Math.max(0, timeAtAveragePaceMs - profile.totalTimeMs);
+}
+
 export function formatDuration(ms: number): string {
 	const seconds = Math.floor(ms / 1000);
 	const minutes = Math.floor(seconds / 60);

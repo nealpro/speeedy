@@ -1,3 +1,15 @@
+import { KOFI_URL, STRIPE_PAYMENT_LINK_URL } from "../config.js";
+
+export type DonationLinkId = "kofi" | "stripe";
+
+export interface DonationLink {
+	id: DonationLinkId;
+	label: string;
+	description: string;
+	url: string;
+	icon: "Coffee" | "CreditCard";
+}
+
 export interface DonationWallet {
 	chain: string;
 	label: string;
@@ -21,6 +33,23 @@ export interface Supporter {
 	/** Wallet/payment address (crypto only) */
 	address?: string;
 }
+
+export const DONATION_LINKS: DonationLink[] = [
+	{
+		id: "kofi",
+		label: "Ko-fi",
+		description: "One-time or monthly, card & Apple/Google Pay",
+		url: KOFI_URL,
+		icon: "Coffee",
+	},
+	{
+		id: "stripe",
+		label: "Card via Stripe",
+		description: "Direct card checkout, no third-party account",
+		url: STRIPE_PAYMENT_LINK_URL,
+		icon: "CreditCard",
+	},
+];
 
 export const DONATION_WALLETS: DonationWallet[] = [
 	{
