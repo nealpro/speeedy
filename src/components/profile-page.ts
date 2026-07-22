@@ -97,6 +97,17 @@ export class ProfilePage extends LitElement {
 		}, 4000);
 	};
 
+	private handleDocFileSaved = async (
+		e: CustomEvent<{ savedDoc: SavedDocument }>,
+	): Promise<void> => {
+		this.savedDocs = await getSavedDocuments();
+		this.docUploadError = "";
+		this.docUploadSuccess = `"${e.detail.savedDoc.title}" added to your library.`;
+		setTimeout(() => {
+			this.docUploadSuccess = "";
+		}, 4000);
+	};
+
 	private handleDocFileError = (e: CustomEvent<{ message: string }>): void => {
 		this.docUploadError = e.detail.message;
 		this.docUploadSuccess = "";
@@ -591,6 +602,7 @@ export class ProfilePage extends LitElement {
 					label="Add a document to your library"
 					hint="PDF · DOCX · TXT · EPUB · RTF · HTML · ODT · and more"
 					@file-parsed=${this.handleDocFileParsed}
+					@file-saved=${this.handleDocFileSaved}
 					@file-error=${this.handleDocFileError}
 				></speeedy-file-uploader>
 				${
@@ -722,12 +734,7 @@ export class ProfilePage extends LitElement {
             class="btn btn-primary btn-sm gap-2 rounded-lg ml-1"
             @click=${() => {
 							const resumeIndex = pct >= 98 ? 0 : doc.resumeWordIndex;
-							navigate(
-								"reader",
-								{ title: doc.title, text: doc.text, wordCount: doc.wordCount },
-								doc.id,
-								resumeIndex,
-							);
+							navigate("reader", undefined, doc.id, resumeIndex);
 						}}
           >
             ${icon(Play, "w-3.5 h-3.5")} ${resumeLabel}

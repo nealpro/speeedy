@@ -9,9 +9,11 @@ import type {
 } from "../models/types.js";
 import {
 	deleteSavedDocument,
+	getDocumentText,
 	getSavedDocuments,
 	saveDocument,
 	saveProfile,
+	updateDocumentTitle,
 } from "../services/storage-service.js";
 import { applyTheme, getResolvedTheme } from "../services/theme-service.js";
 import { trackEvent } from "../utils/analytics.js";
@@ -41,6 +43,7 @@ export class AppPage extends LitElement {
 	@state() private loadedDocTitle = "";
 	@state() private loadedDocText = "";
 	@state() private customTitle = "";
+	@state() private directImportedDoc: SavedDocument | null = null;
 	@state() private savedDocs: SavedDocument[] = [];
 	@state() private welcomeDismissed = false;
 	@state() private recentMinimized = false;
@@ -97,6 +100,7 @@ export class AppPage extends LitElement {
 		if (!text) return;
 
 		this.pastedText = text;
+		this.directImportedDoc = null;
 		this.loadedDocTitle = "";
 		this.loadedDocText = "";
 		this.customTitle = "";
@@ -118,6 +122,7 @@ export class AppPage extends LitElement {
 				return;
 			}
 			this.pastedText = text.trim();
+			this.directImportedDoc = null;
 			this.loadedDocTitle = "";
 			this.loadedDocText = "";
 			this.customTitle = "";
@@ -134,6 +139,7 @@ export class AppPage extends LitElement {
 		e: CustomEvent<{ doc: ParsedDocument }>,
 	): void => {
 		const doc = e.detail.doc;
+		this.directImportedDoc = null;
 		this.pastedText = doc.text;
 		this.loadedDocTitle = doc.title;
 		this.loadedDocText = doc.text;
@@ -146,12 +152,38 @@ export class AppPage extends LitElement {
 		trackEvent("file-uploaded", { type: ext, words: doc.wordCount });
 	};
 
+	private handleFileSaved = (
+		e: CustomEvent<{ savedDoc: SavedDocument }>,
+	): void => {
+		this.directImportedDoc = e.detail.savedDoc;
+		this.customTitle = e.detail.savedDoc.title;
+		this.pastedText = "";
+		this.loadedDocText = "";
+		this.loadedDocTitle = e.detail.savedDoc.title;
+		this.error = "";
+		trackEvent("file-uploaded", {
+			type: "streamed",
+			words: e.detail.savedDoc.wordCount,
+		});
+	};
+
 	private handleFileError = (e: CustomEvent<{ message: string }>): void => {
 		this.error = e.detail.message;
 		showToast(e.detail.message, "error");
 	};
 
 	private handleStartReading = async (): Promise<void> => {
+		if (this.directImportedDoc) {
+			const title = this.customTitle.trim() || this.directImportedDoc.title;
+			await updateDocumentTitle(this.directImportedDoc.id, title);
+			navigate(
+				"reader",
+				undefined,
+				this.directImportedDoc.id,
+				this.directImportedDoc.resumeWordIndex,
+			);
+			return;
+		}
 		const text = this.pastedText.trim();
 		if (!text) {
 			this.error = "Nothing to read yet. Paste some text or load a file first.";
@@ -178,12 +210,7 @@ export class AppPage extends LitElement {
 		this.loadedDocText = "";
 		this.customTitle = "";
 		this.pastedText = "";
-		navigate(
-			"reader",
-			{ title: saved.title, text: saved.text, wordCount: saved.wordCount },
-			saved.id,
-			saved.resumeWordIndex,
-		);
+		navigate("reader", undefined, saved.id, saved.resumeWordIndex);
 	};
 
 	private cycleTheme(): void {
@@ -382,12 +409,37 @@ export class AppPage extends LitElement {
         label="Drop a file, or click to browse"
         hint="PDF · DOCX · DOC · TXT · EPUB · RTF · HTML · ODT · and more · up to 50 MB"
         @file-parsed=${this.handleFileParsed}
+		@file-saved=${this.handleFileSaved}
         @file-error=${this.handleFileError}
       ></speeedy-file-uploader>
+		${
+			this.directImportedDoc
+				? html`
+					<div class="mt-4 rounded-xl border border-base-200 p-4 flex flex-col gap-3">
+						<speeedy-input
+							label="Title"
+							.value=${this.customTitle}
+							@change=${(e: CustomEvent<{ value: string }>) => {
+								this.customTitle = e.detail.value;
+							}}
+						></speeedy-input>
+						<div class="flex items-center justify-between gap-3">
+							<span class="text-xs text-ui-muted font-mono">
+								${this.directImportedDoc.wordCount.toLocaleString()} words · stored in ${this.directImportedDoc.chunkCount ?? 0} chunks
+							</span>
+							<button class="btn btn-primary btn-sm" @click=${() => void this.handleStartReading()}>
+								Begin Reading
+							</button>
+						</div>
+					</div>
+				`
+				: ""
+		}
     `;
 	}
 
 	private loadDemoText(): void {
+		this.directImportedDoc = null;
 		this.pastedText = DEMO_TEXT;
 		this.loadedDocTitle = "Demo: The Science of Speed Reading";
 		this.loadedDocText = DEMO_TEXT;
@@ -461,6 +513,7 @@ export class AppPage extends LitElement {
           max-height="14rem"
           @change=${(e: CustomEvent<{ value: string }>) => {
 						this.pastedText = e.detail.value;
+						this.directImportedDoc = null;
 					}}
         ></speeedy-textarea>
         <div class="flex items-center justify-between gap-2">
@@ -473,6 +526,7 @@ export class AppPage extends LitElement {
 								? html`
               <button class="btn btn-ghost btn-sm" @click=${() => {
 								this.pastedText = "";
+								this.directImportedDoc = null;
 								this.loadedDocTitle = "";
 								this.loadedDocText = "";
 								this.customTitle = "";
@@ -571,14 +625,15 @@ export class AppPage extends LitElement {
             class="btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100 transition-opacity text-ui-muted hover:text-base-content"
             title="Edit"
             aria-label="Edit ${doc.title}"
-            @click=${() => {
-							this.customTitle = doc.title;
-							this.pastedText = doc.text;
-							this.loadedDocTitle = doc.title;
-							this.loadedDocText = doc.text;
-							this.inputTab = "text";
-							window.scrollTo({ top: 0, behavior: "smooth" });
-						}}
+			@click=${async () => {
+				this.directImportedDoc = null;
+				this.customTitle = doc.title;
+				this.pastedText = await getDocumentText(doc.id);
+				this.loadedDocTitle = doc.title;
+				this.loadedDocText = this.pastedText;
+				this.inputTab = "text";
+				window.scrollTo({ top: 0, behavior: "smooth" });
+			}}
           >
             ${icon(Edit2, "w-3.5 h-3.5")}
           </button>
@@ -602,12 +657,7 @@ export class AppPage extends LitElement {
 								source: "library",
 								words: doc.wordCount,
 							});
-							navigate(
-								"reader",
-								{ title: doc.title, text: doc.text, wordCount: doc.wordCount },
-								doc.id,
-								resumeIndex,
-							);
+							navigate("reader", undefined, doc.id, resumeIndex);
 						}}
           >
             ${icon(Play, "w-3 h-3")} ${resumeLabel}

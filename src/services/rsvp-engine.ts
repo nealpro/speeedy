@@ -204,10 +204,28 @@ export type EngineEventType = "word" | "complete" | "progress" | "stateChange";
 
 export type EngineListener = (state: PlaybackState) => void;
 
+export interface DocumentTokenProvider {
+	totalWords: number;
+	getTokens(
+		start: number,
+		count: number,
+		settings: ReaderSettings,
+	): Promise<WordToken[]>;
+}
+
 export class RSVPEngine {
 	private _tokens: WordToken[] = [];
+	private _windowStart = 0;
+	private provider: DocumentTokenProvider | null = null;
+	private activeSettings: ReaderSettings | null = null;
+	private windowLoadId = 0;
+	private static readonly BUFFER_WORDS = 6_000;
+	private static readonly BUFFER_LOOKBEHIND = 2_000;
 	get tokens(): WordToken[] {
 		return this._tokens;
+	}
+	get windowStart(): number {
+		return this._windowStart;
 	}
 	private state: PlaybackState = this.emptyState();
 	private timerId: ReturnType<typeof setTimeout> | null = null;
@@ -230,6 +248,9 @@ export class RSVPEngine {
 
 	load(text: string, settings: ReaderSettings): void {
 		this.stop();
+		this.provider = null;
+		this.activeSettings = settings;
+		this._windowStart = 0;
 		this._tokens = tokenize(text, settings);
 		this.state = {
 			...this.emptyState(),
@@ -240,8 +261,30 @@ export class RSVPEngine {
 		this.emit("stateChange", this.state);
 	}
 
+	async loadProvider(
+		provider: DocumentTokenProvider,
+		settings: ReaderSettings,
+		startIndex = 0,
+	): Promise<void> {
+		this.stop();
+		this.provider = provider;
+		this.activeSettings = settings;
+		this._tokens = [];
+		this._windowStart = 0;
+		this.state = {
+			...this.emptyState(),
+			totalWords: provider.totalWords,
+			wordIndex: Math.max(0, Math.min(provider.totalWords - 1, startIndex)),
+			baseWpm: settings.wpm,
+		};
+		await this.ensureWindow(this.state.wordIndex, true);
+		this.updateCurrentDisplay();
+		this.emit("stateChange", this.state);
+	}
+
 	play(settings: ReaderSettings): void {
-		if (this.state.wordIndex >= this.tokens.length) {
+		this.activeSettings = settings;
+		if (this.state.wordIndex >= this.state.totalWords) {
 			this.state.wordIndex = 0;
 		}
 		this.state.playing = true;
@@ -250,7 +293,7 @@ export class RSVPEngine {
 		}
 		this.state.baseWpm = settings.wpm;
 		this.emit("stateChange", this.state);
-		this.scheduleNext(settings);
+		void this.scheduleNext(settings);
 	}
 
 	pause(): void {
@@ -269,7 +312,7 @@ export class RSVPEngine {
 		this.clearTimer();
 		this.state = {
 			...this.emptyState(),
-			totalWords: this.tokens.length,
+			totalWords: this.provider?.totalWords ?? this.tokens.length,
 			baseWpm: this.state.baseWpm,
 		};
 		this.emit("stateChange", this.state);
@@ -278,28 +321,35 @@ export class RSVPEngine {
 	seekBy(delta: number): void {
 		const newIndex = Math.max(
 			0,
-			Math.min(this.tokens.length - 1, this.state.wordIndex + delta),
+			Math.min(this.state.totalWords - 1, this.state.wordIndex + delta),
 		);
-		this.state.wordIndex = newIndex;
-		if (!this.state.playing) {
-			this.updateCurrentDisplay();
-		}
-		this.emit("stateChange", this.state);
+		this.seekToWord(newIndex);
 	}
 
 	seekToWord(index: number): void {
-		this.state.wordIndex = Math.max(0, Math.min(this.tokens.length - 1, index));
+		this.state.wordIndex = Math.max(
+			0,
+			Math.min(this.state.totalWords - 1, index),
+		);
 		if (!this.state.playing) {
-			this.updateCurrentDisplay();
+			if (this.tokenAt(this.state.wordIndex)) {
+				this.updateCurrentDisplay();
+			} else {
+				void this.ensureWindow(this.state.wordIndex, true).then(() => {
+					this.updateCurrentDisplay();
+					this.emit("stateChange", this.state);
+				});
+			}
 		}
 		this.emit("stateChange", this.state);
 	}
 
 	setWpm(settings: ReaderSettings): void {
+		this.activeSettings = settings;
 		this.state.baseWpm = settings.wpm;
 		if (this.state.playing) {
 			this.clearTimer();
-			this.scheduleNext(settings, true);
+			void this.scheduleNext(settings, true);
 		}
 	}
 
@@ -321,71 +371,44 @@ export class RSVPEngine {
 	}
 
 	getProgressPercent(): number {
-		if (this.tokens.length === 0) return 0;
-		return (this.state.wordIndex / this.tokens.length) * 100;
+		if (this.state.totalWords === 0) return 0;
+		return (this.state.wordIndex / this.state.totalWords) * 100;
 	}
 
 	getEstimatedRemainingMs(settings: ReaderSettings): number {
-		const total = this.tokens.length;
+		const total = this.state.totalWords;
 		const current = this.state.wordIndex;
 		if (total === 0 || current >= total) return 0;
 
-		const remainingTokens = this.tokens.slice(current);
-		let totalMs = 0;
-
-		const smartEnabled = settings.smartSpeed;
-		const rampEnabled = settings.speedRampEnabled;
-		const rampTarget = settings.speedRampTarget;
-		const sentenceMult = settings.sentencePauseMultiplier;
-		const paragraphMult = settings.paragraphPauseMultiplier ?? 1;
-		const asideMult = settings.contextPauseOnClose ? 1.15 : 1;
-		const chunkSize = settings.chunkSize || 1;
-
-		const limit = Math.min(remainingTokens.length, 2000);
-		for (let i = 0; i < limit; i += chunkSize) {
-			const idx = current + i;
-			const chunkTokens = remainingTokens.slice(i, i + chunkSize);
-			if (chunkTokens.length === 0) break;
-
-			const firstToken = chunkTokens[0];
-			const lastToken = chunkTokens[chunkTokens.length - 1];
-
-			let wpm = settings.wpm;
-			if (rampEnabled) wpm = rampWpm(settings.wpm, rampTarget, idx, total);
-			if (smartEnabled) wpm = smartWpm(wpm, firstToken.text);
-
-			const msPerChunk = (60000 / wpm) * chunkTokens.length;
-			const extraPause = lastToken.pauseMultiplier - 1;
-			let delay = msPerChunk * (1 + extraPause * sentenceMult);
-
-			if (paragraphMult > 1 && firstToken.context?.paragraphStart)
-				delay *= paragraphMult;
-			if (lastToken.context?.closesAside) delay *= asideMult;
-
-			totalMs += delay;
-		}
-
-		if (remainingTokens.length > limit) {
-			const avgPerWord = totalMs / limit;
-			totalMs += avgPerWord * (remainingTokens.length - limit);
-		}
-
-		return totalMs;
+		const averagePauseFactor = settings.smartSpeed ? 1.05 : 1.12;
+		return ((total - current) * 60_000 * averagePauseFactor) / settings.wpm;
 	}
 
-	private scheduleNext(settings: ReaderSettings, isReschedule = false): void {
-		if (!this.state.playing || this.state.wordIndex >= this.tokens.length) {
-			if (this.state.wordIndex >= this.tokens.length) {
+	private async scheduleNext(
+		settings: ReaderSettings,
+		isReschedule = false,
+	): Promise<void> {
+		if (!this.state.playing || this.state.wordIndex >= this.state.totalWords) {
+			if (this.state.wordIndex >= this.state.totalWords) {
 				this.handleComplete();
 			}
 			return;
 		}
+		if (this.provider) await this.ensureWindow(this.state.wordIndex);
+		if (!this.state.playing) return;
 
 		const chunkEnd = Math.min(
 			this.state.wordIndex + settings.chunkSize,
-			this.tokens.length,
+			this.state.totalWords,
 		);
-		const chunkTokens = this.tokens.slice(this.state.wordIndex, chunkEnd);
+		if (this.provider) await this.ensureWindow(chunkEnd - 1);
+		const localStart = this.state.wordIndex - this._windowStart;
+		const localEnd = chunkEnd - this._windowStart;
+		const chunkTokens = this.tokens.slice(localStart, localEnd);
+		if (chunkTokens.length === 0) {
+			this.pause();
+			return;
+		}
 		const lastToken = chunkTokens[chunkTokens.length - 1];
 
 		this.state.currentTokens = chunkTokens;
@@ -405,7 +428,7 @@ export class RSVPEngine {
 					settings.wpm,
 					settings.speedRampTarget,
 					this.state.wordIndex,
-					this.tokens.length,
+					this.state.totalWords,
 				)
 			: settings.wpm;
 
@@ -433,7 +456,7 @@ export class RSVPEngine {
 		}
 
 		this.timerId = setTimeout(() => {
-			this.scheduleNext(settings);
+			void this.scheduleNext(settings);
 		}, delay);
 	}
 
@@ -455,12 +478,55 @@ export class RSVPEngine {
 	}
 
 	private updateCurrentDisplay(): void {
-		if (this.tokens.length === 0) return;
-		const token = this.tokens[this.state.wordIndex];
+		if (this.state.totalWords === 0) return;
+		const token = this.tokenAt(this.state.wordIndex);
+		if (!token) return;
 		this.state.currentTokens = [token];
 		this.state.displayWordIndex = this.state.wordIndex;
 		this.state.currentOrp = computeOrp(token.text);
 		this.emit("word", this.state);
+	}
+
+	async getTokenWindow(start: number, count: number): Promise<WordToken[]> {
+		if (count <= 0) return [];
+		if (this.provider && this.activeSettings) {
+			return this.provider.getTokens(start, count, this.activeSettings);
+		}
+		return this.tokens.slice(start, start + count);
+	}
+
+	private tokenAt(globalIndex: number): WordToken | undefined {
+		return this.tokens[globalIndex - this._windowStart];
+	}
+
+	private async ensureWindow(index: number, force = false): Promise<void> {
+		if (!this.provider || !this.activeSettings) return;
+		const windowEnd = this._windowStart + this.tokens.length;
+		const safelyBuffered =
+			index >= this._windowStart + 250 && index < windowEnd - 750;
+		const available = index >= this._windowStart && index < windowEnd;
+		if (!force && safelyBuffered) return;
+		if (!force && available) {
+			void this.ensureWindow(index, true);
+			return;
+		}
+
+		const loadId = ++this.windowLoadId;
+		const start = Math.max(
+			0,
+			Math.min(
+				index - RSVPEngine.BUFFER_LOOKBEHIND,
+				Math.max(0, this.provider.totalWords - RSVPEngine.BUFFER_WORDS),
+			),
+		);
+		const tokens = await this.provider.getTokens(
+			start,
+			RSVPEngine.BUFFER_WORDS,
+			this.activeSettings,
+		);
+		if (loadId !== this.windowLoadId) return;
+		this._windowStart = start;
+		this._tokens = tokens;
 	}
 
 	private emit(event: EngineEventType, state: PlaybackState): void {

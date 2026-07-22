@@ -3,14 +3,22 @@ import { customElement, property, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import type {
 	ParsedDocument,
+	ReaderControlAction,
 	ReaderSettings,
 	UserProfile,
 } from "../models/types.js";
 import { audioService } from "../services/audio-service.js";
 import { DEFAULT_SETTINGS } from "../services/defaults.js";
-import { type PlaybackState, RSVPEngine } from "../services/rsvp-engine.js";
+import { StoredDocumentProvider } from "../services/document-provider.js";
+import {
+	type PlaybackState,
+	RSVPEngine,
+	type WordToken,
+} from "../services/rsvp-engine.js";
 import { recordSession } from "../services/stats-service.js";
 import {
+	getDocumentText,
+	getSavedDocument,
 	getSavedDocuments,
 	saveDocument,
 	updateDocumentProgress,
@@ -48,9 +56,23 @@ export class RsvpReader extends LitElement {
 	@state() private isProgressHovered = false;
 	@state() private isSeeking = false;
 	@state() private seekWordIndex: number | null = null;
+	@state() private gestureMode: "idle" | "press" | "scrub" | "speed" = "idle";
+	@state() private speedOverlay: number | null = null;
+	@state() private bufferedViewActive = false;
+	@state() private bufferedTokens: WordToken[] = [];
+	@state() private bufferedWindowStart = 0;
 	private wasPlayingBeforeSeek = false;
 	private countdownTimer: ReturnType<typeof setTimeout> | null = null;
 	private seekingPointerId: number | null = null;
+	private gesturePointerId: number | null = null;
+	private gestureStartX = 0;
+	private gestureStartY = 0;
+	private gestureStartWordIndex = 0;
+	private gestureStartWpm = 300;
+	private readKeysHeld = new Set<string>();
+	private bufferedLoadId = 0;
+	private static readonly GESTURE_LOCK_PX = 12;
+	private static readonly GESTURE_STEP_PX = 60;
 	/** Periodic auto-save timer — saves reading position every 15 s while playing. */
 	private _autoSaveTimer: ReturnType<typeof setInterval> | null = null;
 	/** Stores the raw (unprocessed) document text so we can re-tokenize when settings like removeCitations change. */
@@ -67,9 +89,40 @@ export class RsvpReader extends LitElement {
 	private keyHandler = (e: KeyboardEvent): void => {
 		if (
 			e.target instanceof HTMLInputElement ||
-			e.target instanceof HTMLTextAreaElement
+			e.target instanceof HTMLTextAreaElement ||
+			(e.target instanceof HTMLElement && e.target.closest("settings-panel"))
 		)
 			return;
+
+		if (this.settings.holdToReadMode) {
+			if (e.code === "Enter" && this.bufferedViewActive) {
+				e.preventDefault();
+				this.bufferedViewActive = false;
+				return;
+			}
+			const action = this.actionForCode(e.code);
+			if (action) {
+				e.preventDefault();
+				if (action === "read") {
+					if (!e.repeat) {
+						this.readKeysHeld.add(e.code);
+						this.startImmediatePlayback();
+					}
+				} else if (action === "scrubBackward") {
+					this.scrubByKeyboard(-1);
+				} else if (action === "scrubForward") {
+					this.scrubByKeyboard(1);
+				} else if (action === "speedDown") {
+					this.adjustSpeed(-25);
+				} else if (action === "speedUp") {
+					this.adjustSpeed(25);
+				}
+				return;
+			}
+			if (e.key === "Escape") void this.handleBack();
+			else if (e.key === "?") this.showShortcuts = !this.showShortcuts;
+			return;
+		}
 		switch (e.key) {
 			case " ":
 				e.preventDefault();
@@ -111,6 +164,21 @@ export class RsvpReader extends LitElement {
 		}
 	};
 
+	private keyUpHandler = (e: KeyboardEvent): void => {
+		if (!this.settings?.holdToReadMode) return;
+		if (!this.settings.holdToReadBindings.read.includes(e.code)) return;
+		this.readKeysHeld.delete(e.code);
+		if (this.readKeysHeld.size === 0) this.pauseImmediatePlayback();
+	};
+
+	private actionForCode(code: string): ReaderControlAction | null {
+		const bindings = this.settings.holdToReadBindings;
+		for (const action of Object.keys(bindings) as ReaderControlAction[]) {
+			if (bindings[action].includes(code)) return action;
+		}
+		return null;
+	}
+
 	/**
 	 * Intercepts paste events inside the active reader window.
 	 * If the user pastes while not focused in an input/textarea, instantly
@@ -147,11 +215,7 @@ export class RsvpReader extends LitElement {
 
 		this.savedDocId = saved.id;
 		this.resumeWordIndex = 0;
-		this.loadDoc({
-			title: saved.title,
-			text: saved.text,
-			wordCount: saved.wordCount,
-		});
+		await this.loadSavedDocument(saved.id, 0);
 
 		showToast("Text loaded from clipboard ✓", "success");
 		trackEvent("clipboard-paste-reader", { words: wordCount });
@@ -168,6 +232,10 @@ export class RsvpReader extends LitElement {
 		this.settings = {
 			...DEFAULT_SETTINGS,
 			...this.profile.settings,
+			holdToReadBindings: {
+				...DEFAULT_SETTINGS.holdToReadBindings,
+				...this.profile.settings.holdToReadBindings,
+			},
 		};
 
 		this.engine.on("word", (s) => {
@@ -205,16 +273,18 @@ export class RsvpReader extends LitElement {
 			}
 		});
 
-		if (this.pendingDoc) {
+		if (this.savedDocId) {
+			void this.loadSavedDocument(this.savedDocId, this.resumeWordIndex);
+			localStorage.setItem("speeedy:last-doc-id", this.savedDocId);
+		} else if (this.pendingDoc) {
 			this.loadDoc(this.pendingDoc);
-			if (this.savedDocId) {
-				localStorage.setItem("speeedy:last-doc-id", this.savedDocId);
-			}
 		} else {
 			void this.restoreLastDocument();
 		}
 
 		window.addEventListener("keydown", this.keyHandler);
+		window.addEventListener("keyup", this.keyUpHandler);
+		window.addEventListener("blur", this.handleInteractionLoss);
 		window.addEventListener("resize", this._handleResize);
 		window.addEventListener("beforeunload", this.handleUnload);
 		document.addEventListener("visibilitychange", this.handleVisibilityChange);
@@ -232,13 +302,7 @@ export class RsvpReader extends LitElement {
 			localStorage.setItem("speeedy:last-doc-id", docToLoad.id);
 		}
 
-		this.savedDocId = docToLoad.id;
-		this.resumeWordIndex = docToLoad.resumeWordIndex;
-		this.loadDoc({
-			title: docToLoad.title,
-			text: docToLoad.text,
-			wordCount: docToLoad.wordCount,
-		});
+		await this.loadSavedDocument(docToLoad.id, docToLoad.resumeWordIndex);
 	}
 
 	override disconnectedCallback(): void {
@@ -248,6 +312,8 @@ export class RsvpReader extends LitElement {
 		this.engine.stop();
 		audioService.stopAmbientNoise();
 		window.removeEventListener("keydown", this.keyHandler);
+		window.removeEventListener("keyup", this.keyUpHandler);
+		window.removeEventListener("blur", this.handleInteractionLoss);
 		window.removeEventListener("resize", this._handleResize);
 		this._rtlResizeObserver?.disconnect();
 		this._rtlResizeObserver = null;
@@ -266,7 +332,8 @@ export class RsvpReader extends LitElement {
 		if (
 			this.playbackState &&
 			!this.playbackState.playing &&
-			(this.settings.pauseView === "fulltext" ||
+			(this.bufferedViewActive ||
+				this.settings.pauseView === "fulltext" ||
 				this.settings.pauseView === "context")
 		) {
 			requestAnimationFrame(() => {
@@ -333,6 +400,8 @@ export class RsvpReader extends LitElement {
 	private static readonly RESUME_LOOKBACK_WORDS = 12;
 
 	private loadDoc(doc: ParsedDocument): void {
+		this.bufferedViewActive = false;
+		this.bufferedTokens = [];
 		this.docTitle = doc.title;
 		this.totalDocWords = doc.wordCount;
 		this.rawDocText = doc.text;
@@ -353,7 +422,43 @@ export class RsvpReader extends LitElement {
 		this.sessionStartTime = null;
 	}
 
+	private async loadSavedDocument(
+		id: string,
+		resumeIndex: number,
+		applyResumeLookback = true,
+	): Promise<void> {
+		const doc = await getSavedDocument(id);
+		if (!doc) {
+			showToast("That saved document could not be found.", "error");
+			return;
+		}
+		this.bufferedViewActive = false;
+		this.bufferedTokens = [];
+		this.savedDocId = id;
+		this.resumeWordIndex = resumeIndex;
+		this.docTitle = doc.title;
+		const startIndex = Math.max(
+			0,
+			resumeIndex -
+				(applyResumeLookback ? RsvpReader.RESUME_LOOKBACK_WORDS : 0),
+		);
+		if (this.settings.removeCitations) {
+			this.rawDocText = await getDocumentText(id);
+			this.engine.load(stripCitations(this.rawDocText), this.settings);
+			this.engine.seekToWord(startIndex);
+		} else {
+			this.rawDocText = "";
+			const provider = await StoredDocumentProvider.open(id);
+			await this.engine.loadProvider(provider, this.settings, startIndex);
+		}
+		this.totalDocWords = this.engine.getState().totalWords;
+		this.wordsAtSessionStart = startIndex;
+		this.sessionStartTime = null;
+		localStorage.setItem("speeedy:last-doc-id", id);
+	}
+
 	private togglePlay(): void {
+		if (this.settings.holdToReadMode) return;
 		const state = this.engine.getState();
 
 		if (this.isCountingDown) {
@@ -409,16 +514,159 @@ export class RsvpReader extends LitElement {
 		}
 	}
 
+	private startImmediatePlayback(): void {
+		const state = this.engine.getState();
+		if (state.totalWords === 0 || state.playing) return;
+		this.cancelCountdown();
+		this.bufferedViewActive = false;
+		this.speedOverlay = null;
+		this.showSettings = false;
+		if (!this.sessionStartTime) {
+			this.sessionStartTime = Date.now();
+			this.wordsAtSessionStart = state.wordIndex;
+		}
+		this.engine.play(this.settings);
+		audioService.setAmbientNoise(
+			this.settings.ambientNoise,
+			this.settings.ambientVolume,
+		);
+		this._startAutoSave();
+	}
+
+	private pauseImmediatePlayback(): void {
+		if (!this.engine.getState().playing) return;
+		this.engine.pause();
+		audioService.stopAmbientNoise();
+		this._stopAutoSave();
+		void this.persistProgress(this.engine.getState());
+	}
+
+	private cancelCountdown(): void {
+		this.isCountingDown = false;
+		if (this.countdownTimer) clearTimeout(this.countdownTimer);
+		this.countdownTimer = null;
+	}
+
+	private handleInteractionLoss = (): void => {
+		this.readKeysHeld.clear();
+		this.pauseImmediatePlayback();
+		this.gestureMode = "idle";
+		this.gesturePointerId = null;
+		this.speedOverlay = null;
+	};
+
+	private onReaderPointerDown = (e: PointerEvent): void => {
+		if (!this.settings.holdToReadMode || !e.isPrimary || e.button !== 0) return;
+		e.preventDefault();
+		this.gesturePointerId = e.pointerId;
+		this.gestureStartX = e.clientX;
+		this.gestureStartY = e.clientY;
+		this.gestureStartWordIndex = this.engine.getState().wordIndex;
+		this.gestureStartWpm = this.settings.wpm;
+		this.gestureMode = "press";
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		this.startImmediatePlayback();
+	};
+
+	private onReaderPointerMove = (e: PointerEvent): void => {
+		if (e.pointerId !== this.gesturePointerId || this.gestureMode === "idle")
+			return;
+		const dx = e.clientX - this.gestureStartX;
+		const dy = e.clientY - this.gestureStartY;
+		if (this.gestureMode === "press") {
+			if (Math.max(Math.abs(dx), Math.abs(dy)) < RsvpReader.GESTURE_LOCK_PX)
+				return;
+			this.pauseImmediatePlayback();
+			this.gestureMode = Math.abs(dx) >= Math.abs(dy) ? "scrub" : "speed";
+			if (this.gestureMode === "scrub") {
+				this.bufferedTokens = [];
+				this.bufferedViewActive = true;
+			}
+		}
+		if (this.gestureMode === "scrub") {
+			const steps = Math.trunc(dx / RsvpReader.GESTURE_STEP_PX);
+			const index = Math.max(
+				0,
+				Math.min(
+					this.engine.getState().totalWords - 1,
+					this.gestureStartWordIndex + steps,
+				),
+			);
+			this.engine.seekToWord(index);
+			void this.refreshBufferedView(index);
+		} else if (this.gestureMode === "speed") {
+			const steps = Math.trunc(-dy / RsvpReader.GESTURE_STEP_PX);
+			const wpm = Math.max(
+				50,
+				Math.min(1600, this.gestureStartWpm + steps * 25),
+			);
+			if (wpm !== this.settings.wpm) this.emit("settings-change", { wpm });
+			this.speedOverlay = wpm;
+		}
+	};
+
+	private onReaderPointerEnd = (e: PointerEvent): void => {
+		if (e.pointerId !== this.gesturePointerId) return;
+		if (this.gestureMode === "press") this.pauseImmediatePlayback();
+		this.gestureMode = "idle";
+		this.gesturePointerId = null;
+		this.speedOverlay = null;
+	};
+
+	private scrubByKeyboard(direction: -1 | 1): void {
+		this.pauseImmediatePlayback();
+		if (!this.bufferedViewActive) this.bufferedTokens = [];
+		this.bufferedViewActive = true;
+		this.engine.seekBy(direction);
+		void this.refreshBufferedView(this.engine.getState().wordIndex);
+	}
+
+	private adjustSpeed(delta: number): void {
+		this.pauseImmediatePlayback();
+		const wpm = Math.max(50, Math.min(1600, this.settings.wpm + delta));
+		this.emit("settings-change", { wpm });
+		this.speedOverlay = wpm;
+		window.setTimeout(() => {
+			if (this.gestureMode === "idle") this.speedOverlay = null;
+		}, 450);
+	}
+
+	private async refreshBufferedView(centerIndex: number): Promise<void> {
+		const loadId = ++this.bufferedLoadId;
+		const start = Math.max(0, centerIndex - 250);
+		const tokens = await this.engine.getTokenWindow(start, 500);
+		if (!this.bufferedViewActive || loadId !== this.bufferedLoadId) return;
+		this.bufferedWindowStart = start;
+		this.bufferedTokens = tokens;
+	}
+
 	private handleSettingsChange(e: CustomEvent): void {
 		const newSettings = e.detail as ReaderSettings;
+		const modeWasEnabled = this.settings.holdToReadMode;
+		const modeEnabled = newSettings.holdToReadMode && !modeWasEnabled;
+		const modeDisabled = !newSettings.holdToReadMode && modeWasEnabled;
 		const citationsToggled =
 			newSettings.removeCitations !== this.settings.removeCitations;
 		this.settings = newSettings;
 		this.engine.setWpm(newSettings);
 		applyTheme(newSettings.theme);
+		if (modeEnabled) {
+			this.cancelCountdown();
+			this.pauseImmediatePlayback();
+		}
+		if (modeDisabled) this.pauseImmediatePlayback();
+		if (!newSettings.holdToReadMode) {
+			this.readKeysHeld.clear();
+			this.bufferedViewActive = false;
+			this.speedOverlay = null;
+		}
 
 		// Re-tokenize when the citations toggle changes
-		if (citationsToggled && this.rawDocText) {
+		if (citationsToggled && this.savedDocId) {
+			const currentIndex = this.engine.getState().wordIndex;
+			this.pauseImmediatePlayback();
+			void this.loadSavedDocument(this.savedDocId, currentIndex, false);
+		} else if (citationsToggled && this.rawDocText) {
 			const currentIndex = this.engine.getState().wordIndex;
 			const textToLoad = newSettings.removeCitations
 				? stripCitations(this.rawDocText)
@@ -507,6 +755,7 @@ export class RsvpReader extends LitElement {
 
 	private handleVisibilityChange = (): void => {
 		if (document.visibilityState === "hidden") {
+			if (this.settings.holdToReadMode) this.handleInteractionLoss();
 			this.persistProgress(this.engine.getState());
 		}
 	};
@@ -590,6 +839,7 @@ export class RsvpReader extends LitElement {
 		/** Immersive chrome hidden only when the setting is on and playback (or countdown) is active. Pausing always shows controls again. */
 		const focusModeActive =
 			hasDoc &&
+			!this.settings.holdToReadMode &&
 			(this.settings.focusModeEnabled ?? false) &&
 			(playing || this.isCountingDown);
 
@@ -745,19 +995,30 @@ export class RsvpReader extends LitElement {
 
 					<!-- Word Display Area -->
 					<div
-						class="flex-1 flex flex-col items-center justify-center cursor-pointer select-none overflow-hidden relative"
-						@click=${this.togglePlay}
+						data-reader-interaction-area
+						class="flex-1 flex flex-col items-center justify-center cursor-pointer select-none overflow-hidden relative ${this.settings.holdToReadMode ? "touch-none" : ""}"
+						@click=${() => {
+							if (!this.settings.holdToReadMode) this.togglePlay();
+						}}
+						@pointerdown=${this.onReaderPointerDown}
+						@pointermove=${this.onReaderPointerMove}
+						@pointerup=${this.onReaderPointerEnd}
+						@pointercancel=${this.onReaderPointerEnd}
 					>
 						${
 							!s || s.totalWords === 0
 								? this.renderEmptyState()
-								: this.settings.tickerMode
-									? this.renderTickerDisplay(s)
-									: !s.playing &&
-											(this.settings.pauseView === "fulltext" ||
-												this.settings.pauseView === "context")
-										? this.renderFullTextPauseView(s)
-										: this.renderWordDisplay(s)
+								: this.speedOverlay !== null
+									? this.renderSpeedOverlay(this.speedOverlay)
+									: this.bufferedViewActive
+										? this.renderBufferedDocumentView(s)
+										: this.settings.tickerMode
+											? this.renderTickerDisplay(s)
+											: !s.playing &&
+													(this.settings.pauseView === "fulltext" ||
+														this.settings.pauseView === "context")
+												? this.renderFullTextPauseView(s)
+												: this.renderWordDisplay(s)
 						}
 					</div>
 
@@ -856,18 +1117,70 @@ export class RsvpReader extends LitElement {
     `;
 	}
 
+	private renderSpeedOverlay(wpm: number) {
+		return html`
+			<div data-reader-speed-overlay class="flex flex-col items-center gap-2" aria-live="polite">
+				<span class="text-7xl md:text-8xl font-mono font-semibold text-primary tabular-nums">${wpm}</span>
+				<span class="text-sm uppercase tracking-[0.25em] text-ui-muted">WPM</span>
+			</div>
+		`;
+	}
+
+	private renderBufferedDocumentView(s: PlaybackState) {
+		const currentIdx = s.wordIndex;
+		return html`
+			<div
+				data-reader-buffer-view
+				class="w-full h-full overflow-y-auto px-6 py-5 cursor-text"
+				@click=${(e: Event) => e.stopPropagation()}
+				style="font-size: ${Math.max(18, this.settings.fontSize * 0.34)}px; font-family: '${this.settings.fontFamily}', monospace; line-height: 1.8; max-width: 820px; margin: 0 auto;"
+			>
+				<p class="text-xs text-base-content/45 mb-4 text-center font-mono">
+					Browse mode · drag or use scrub keys · Enter exits · hold to read
+				</p>
+				<p class="text-base-content/80 text-start" dir="auto">
+					${this.bufferedTokens.length === 0 ? "Loading nearby text…" : nothing}
+					${this.bufferedTokens.map((token, localIndex) => {
+						const index = this.bufferedWindowStart + localIndex;
+						return html`<span
+							id=${index === currentIdx ? "current-pause-word" : nothing}
+							class="cursor-pointer rounded inline-block max-w-full break-all ${
+								index === currentIdx
+									? "bg-primary/30 text-primary font-bold px-1"
+									: index < currentIdx
+										? "text-base-content/40"
+										: "text-base-content/80"
+							}"
+							@click=${(e: Event) => {
+								e.stopPropagation();
+								this.engine.seekToWord(index);
+								void this.refreshBufferedView(index);
+							}}
+						>${token.text}</span> `;
+					})}
+				</p>
+			</div>
+		`;
+	}
+
 	private renderFullTextPauseView(s: PlaybackState) {
 		const tokens = this.engine.tokens;
 		if (!tokens || tokens.length === 0) return this.renderWordDisplay(s);
 
 		const currentIdx = s.displayWordIndex;
-		let displayTokens = tokens.map((token, idx) => ({ token, idx }));
-
-		if (this.settings.pauseView === "context") {
-			const start = Math.max(0, currentIdx - 40);
-			const end = Math.min(tokens.length, currentIdx + 40);
-			displayTokens = displayTokens.slice(start, end);
-		}
+		const currentLocal = currentIdx - this.engine.windowStart;
+		const radius =
+			this.settings.pauseView === "context"
+				? 40
+				: tokens.length >= s.totalWords
+					? s.totalWords
+					: 250;
+		const start = Math.max(0, currentLocal - radius);
+		const end = Math.min(tokens.length, currentLocal + radius);
+		const displayTokens = tokens.slice(start, end).map((token, localIndex) => ({
+			token,
+			idx: this.engine.windowStart + start + localIndex,
+		}));
 
 		return html`
       <div
@@ -876,7 +1189,7 @@ export class RsvpReader extends LitElement {
         style="font-size: ${this.settings.fontSize * 0.45}px; font-family: '${this.settings.fontFamily}', monospace; line-height: 1.8; letter-spacing: 0.02em; word-spacing: 0.1em; max-width: 720px; margin: 0 auto; scroll-behavior: smooth;"
       >
         <p class="text-xs text-base-content/40 mb-3 text-center font-mono">
-          Paused — click any word to jump to it, then press play
+		  Paused — click any word to jump to it, then ${this.settings.holdToReadMode ? "hold to read" : "press play"}
         </p>
         <p class="text-base-content/80 text-start" dir="auto">
           ${displayTokens.map(
@@ -949,16 +1262,17 @@ export class RsvpReader extends LitElement {
 
 		const count = this.settings.peripheralContextCount ?? 1;
 		const displayIdx = s.displayWordIndex;
+		const localDisplayIdx = displayIdx - this.engine.windowStart;
 		const prevWordsRaw = this.settings.peripheralContext
 			? Array.from({ length: count }, (_, i) => {
-					const idx = displayIdx - count + i;
+					const idx = localDisplayIdx - count + i;
 					return idx >= 0 ? (this.engine.tokens?.[idx]?.text ?? "") : "";
 				}).filter(Boolean)
 			: [];
 		const nextWordsRaw = this.settings.peripheralContext
 			? Array.from({ length: count }, (_, i) => {
-					const idx = displayIdx + 1 + i;
-					return idx < s.totalWords
+					const idx = localDisplayIdx + 1 + i;
+					return displayIdx + 1 + i < s.totalWords
 						? (this.engine.tokens?.[idx]?.text ?? "")
 						: "";
 				}).filter(Boolean)
@@ -1057,7 +1371,7 @@ export class RsvpReader extends LitElement {
 		const anchorPercent = isMobile ? 50 : 30;
 
 		// Sliding window: 30 words behind, 50 ahead of current index.
-		const idx = s.displayWordIndex;
+		const idx = s.displayWordIndex - this.engine.windowStart;
 		const windowBehind = 30;
 		const windowAhead = 50;
 		const windowStart = Math.max(0, idx - windowBehind);
@@ -1069,9 +1383,9 @@ export class RsvpReader extends LitElement {
 		// Render each word as a span; the current word gets data-ticker-current
 		// and the highlight colour so _positionTicker() can find it via querySelector.
 		const spans = windowTokens.map((token, wi) => {
-			const globalIdx = windowStart + wi;
-			const isCurrent = globalIdx === idx;
-			const isPast = globalIdx < idx;
+			const localIdx = windowStart + wi;
+			const isCurrent = localIdx === idx;
+			const isPast = localIdx < idx;
 
 			if (isCurrent) {
 				return html`<span
@@ -1273,8 +1587,11 @@ export class RsvpReader extends LitElement {
           </svg>
         </button>
 
-        <!-- Play/Pause -->
-        <button
+		${
+			!this.settings.holdToReadMode
+				? html`
+		<!-- Play/Pause -->
+		<button
           type="button"
           class="btn btn-primary btn-circle btn-lg min-h-[52px] min-w-[52px] touch-manipulation"
           @click=${this.togglePlay}
@@ -1292,7 +1609,10 @@ export class RsvpReader extends LitElement {
                 <path d="M8 5v14l11-7z"/>
               </svg>`
 					}
-        </button>
+		</button>
+		`
+				: ""
+		}
 
         <!-- Skip N words -->
         <button
@@ -1365,16 +1685,43 @@ export class RsvpReader extends LitElement {
 	}
 
 	private renderShortcutsModal() {
-		const shortcuts = [
-			["Space", "Play / Pause"],
-			["F", "Toggle focus mode (immersive while playing)"],
-			["Tap", "Pause — with focus mode on, shows controls again"],
-			["←  →", "Speed −/+ 25 WPM"],
-			["↑  ↓", "Back / Forward 5 words"],
-			["R", "Restart from beginning"],
-			["Esc", "Back to home"],
-			["?", "Toggle this overlay"],
-		];
+		const shortcuts = this.settings.holdToReadMode
+			? [
+					[
+						this.settings.holdToReadBindings.read.join(" / ") || "—",
+						"Hold to read; release to pause",
+					],
+					[
+						this.settings.holdToReadBindings.scrubBackward.join(" / ") || "—",
+						"Browse backward",
+					],
+					[
+						this.settings.holdToReadBindings.scrubForward.join(" / ") || "—",
+						"Browse forward",
+					],
+					[
+						this.settings.holdToReadBindings.speedDown.join(" / ") || "—",
+						"Speed −25 WPM",
+					],
+					[
+						this.settings.holdToReadBindings.speedUp.join(" / ") || "—",
+						"Speed +25 WPM",
+					],
+					["Mouse hold", "Read; drag horizontally to browse"],
+					["Mouse ↑ / ↓", "Change speed"],
+					["Enter", "Exit browse view"],
+					["Esc", "Back to home"],
+				]
+			: [
+					["Space", "Play / Pause"],
+					["F", "Toggle focus mode (immersive while playing)"],
+					["Tap", "Pause — with focus mode on, shows controls again"],
+					["←  →", "Speed −/+ 25 WPM"],
+					["↑  ↓", "Back / Forward 5 words"],
+					["R", "Restart from beginning"],
+					["Esc", "Back to home"],
+					["?", "Toggle this overlay"],
+				];
 		return html`
       <div
         class="fixed inset-0 bg-base-content/50 z-50 flex items-center justify-center p-4"

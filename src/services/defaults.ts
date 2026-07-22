@@ -13,6 +13,14 @@ export function getDefaultPivotOffset(): number {
 }
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
+	holdToReadMode: false,
+	holdToReadBindings: {
+		read: ["Space"],
+		scrubBackward: ["ArrowLeft"],
+		scrubForward: ["ArrowRight"],
+		speedDown: ["ArrowDown"],
+		speedUp: ["ArrowUp"],
+	},
 	wpm: 300,
 	fontSize: getDefaultFontSize(),
 	fontFamily: "JetBrains Mono",

@@ -1,8 +1,9 @@
 import { html, LitElement } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import type {
 	FontFamily,
 	FontWeight,
+	ReaderControlAction,
 	ReaderSettings,
 	ThemeName,
 } from "../models/types.js";
@@ -63,6 +64,7 @@ export class SettingsPanel extends LitElement {
 	}
 
 	@property({ type: Object }) settings!: ReaderSettings;
+	@state() private capturingBinding: string | null = null;
 
 	private emit(partial: Partial<ReaderSettings>): void {
 		this.dispatchEvent(
@@ -72,6 +74,58 @@ export class SettingsPanel extends LitElement {
 				composed: true,
 			}),
 		);
+	}
+
+	private setBinding(
+		action: ReaderControlAction,
+		slot: number,
+		code: string | null,
+	): void {
+		const next = Object.fromEntries(
+			Object.entries(this.settings.holdToReadBindings).map(([key, values]) => [
+				key,
+				[...values],
+			]),
+		) as ReaderSettings["holdToReadBindings"];
+		if (code) {
+			for (const key of Object.keys(next) as ReaderControlAction[]) {
+				next[key] = next[key].filter((value) => value !== code);
+			}
+		}
+		const values = [...next[action]];
+		if (code) values[slot] = code;
+		else values.splice(slot, 1);
+		next[action] = values.filter(Boolean).slice(0, 2);
+		this.emit({ holdToReadBindings: next });
+	}
+
+	private captureBinding(
+		e: KeyboardEvent,
+		action: ReaderControlAction,
+		slot: number,
+	): void {
+		if (this.capturingBinding !== `${action}:${slot}`) return;
+		e.preventDefault();
+		e.stopPropagation();
+		this.setBinding(action, slot, e.code);
+		this.capturingBinding = null;
+	}
+
+	private clearBindings(action: ReaderControlAction): void {
+		this.emit({
+			holdToReadBindings: {
+				...this.settings.holdToReadBindings,
+				[action]: [],
+			},
+		});
+	}
+
+	private bindingLabel(code?: string): string {
+		if (!code) return "Unassigned";
+		return code
+			.replace(/^Key/, "")
+			.replace(/^Digit/, "")
+			.replace("Arrow", "");
 	}
 
 	override render() {
@@ -86,6 +140,61 @@ export class SettingsPanel extends LitElement {
 
 		return html`
       <div class="flex flex-col gap-0 p-4 md:px-5 overflow-x-hidden">
+
+		<section class="pb-6" aria-labelledby="hold-to-read-heading">
+			<h2 id="hold-to-read-heading" class="text-xs uppercase tracking-widest text-ui-muted font-medium mb-3">Controls</h2>
+			<speeedy-toggle
+				label="Hold-to-read mode"
+				?checked=${s.holdToReadMode ?? false}
+				tip="Hold the reading area or a configured key to read. Drag horizontally to browse and vertically to change speed."
+				@change=${(e: CustomEvent) => this.emit({ holdToReadMode: e.detail.value })}
+			></speeedy-toggle>
+			${
+				s.holdToReadMode
+					? html`
+				<div class="mt-4 flex flex-col gap-3 rounded-xl border border-base-200 bg-base-200/20 p-3">
+					<p class="text-xs text-ui-muted leading-relaxed">Choose up to two physical keys per action. Click a slot, then press any key.</p>
+					${(
+						[
+							["read", "Hold to read"],
+							["scrubBackward", "Scrub backward"],
+							["scrubForward", "Scrub forward"],
+							["speedDown", "Speed down"],
+							["speedUp", "Speed up"],
+						] as const
+					).map(
+						([action, label]) => html`
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-xs text-base-content/75">${label}</span>
+							<div class="flex gap-1">
+								${[0, 1].map((slot) => {
+									const captureId = `${action}:${slot}`;
+									const code = s.holdToReadBindings?.[action]?.[slot];
+									return html`<button
+										type="button"
+										class="btn btn-xs min-w-16 font-mono ${this.capturingBinding === captureId ? "btn-primary" : "btn-ghost border border-base-300"}"
+										@click=${() => {
+											this.capturingBinding = captureId;
+										}}
+										@keydown=${(e: KeyboardEvent) => this.captureBinding(e, action, slot)}
+									>${this.capturingBinding === captureId ? "Press key…" : this.bindingLabel(code)}</button>`;
+								})}
+								<button
+									type="button"
+									class="btn btn-xs btn-ghost px-2 text-base-content/45"
+									title="Clear ${label} keys"
+									aria-label="Clear ${label} keys"
+									@click=${() => this.clearBindings(action)}
+								>×</button>
+							</div>
+						</div>
+					`,
+					)}
+				</div>
+			`
+					: ""
+			}
+		</section>
 
         <!-- Theme -->
         <section class="pb-6">
@@ -410,12 +519,16 @@ export class SettingsPanel extends LitElement {
               ?checked=${s.showProgress}
               @change=${(e: CustomEvent) => this.emit({ showProgress: e.detail.value })}
             ></speeedy-toggle>
-            <speeedy-toggle
+			${
+				!s.holdToReadMode
+					? html`<speeedy-toggle
               label="Focus mode (immersion)"
               ?checked=${s.focusModeEnabled ?? false}
               tip="While playing, hide the header, progress bar, bottom controls, and settings so only words show. Tap the reading area or Space to pause and bring controls back. Toggle anytime with F."
               @change=${(e: CustomEvent) => this.emit({ focusModeEnabled: e.detail.value })}
-            ></speeedy-toggle>
+			></speeedy-toggle>`
+					: ""
+			}
             <speeedy-toggle
               label="ORP guide marks"
               ?checked=${s.showOrpGuides}
@@ -570,12 +683,16 @@ export class SettingsPanel extends LitElement {
         <section class="border-t border-base-200 pt-6 pb-4">
           <h2 class="text-xs uppercase tracking-widest text-ui-muted font-medium mb-4">Engine logic</h2>
           <div class="flex flex-col gap-4">
-            <speeedy-toggle
+			${
+				!s.holdToReadMode
+					? html`<speeedy-toggle
               label="Start countdown (3s)"
               ?checked=${s.countdownEnabled ?? false}
               tip=${TOOLTIPS.countdown}
               @change=${(e: CustomEvent) => this.emit({ countdownEnabled: e.detail.value })}
-            ></speeedy-toggle>
+			></speeedy-toggle>`
+					: ""
+			}
             <speeedy-toggle
               label="Comma pause beacon"
               ?checked=${s.commaAsPause ?? false}

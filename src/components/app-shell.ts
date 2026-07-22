@@ -187,11 +187,11 @@ export class AppShell extends LitElement {
 			savedDocId?: string;
 			resumeWordIndex?: number;
 		}>;
-		if (ce.detail.doc) this.pendingDoc = ce.detail.doc;
-		if (ce.detail.savedDocId != null)
-			this.pendingSavedDocId = ce.detail.savedDocId;
-		if (ce.detail.resumeWordIndex != null)
-			this.pendingResumeIndex = ce.detail.resumeWordIndex;
+		if (ce.detail.route === "reader") {
+			this.pendingDoc = ce.detail.doc ?? null;
+			this.pendingSavedDocId = ce.detail.savedDocId ?? null;
+			this.pendingResumeIndex = ce.detail.resumeWordIndex ?? 0;
+		}
 		window.location.hash = `/${ce.detail.route}`;
 	};
 

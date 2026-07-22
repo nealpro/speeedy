@@ -36,7 +36,9 @@ test.describe("App page — intake flow", () => {
 		await textarea.evaluate((el) => {
 			el.dispatchEvent(
 				new CustomEvent("change", {
-					detail: { value: "Hello world. This is a test sentence for reading." },
+					detail: {
+						value: "Hello world. This is a test sentence for reading.",
+					},
 					bubbles: true,
 					composed: true,
 				}),
@@ -71,5 +73,32 @@ test.describe("App page — intake flow", () => {
 		await expect(
 			page.getByRole("button", { name: /profile|reader/i }).first(),
 		).toBeVisible();
+	});
+
+	test("streams a large plain-text document into the buffered reader", async ({
+		page,
+	}) => {
+		const skipOnboarding = page.getByRole("button", { name: "Skip" });
+		await skipOnboarding.waitFor({ state: "visible", timeout: 3_000 });
+		await skipOnboarding.click();
+		await page.getByRole("button", { name: "File" }).click();
+		const text = Array.from(
+			{ length: 100_000 },
+			(_, index) => `word${index.toString().padStart(6, "0")}`,
+		).join(" ");
+		expect(Buffer.byteLength(text)).toBeGreaterThan(1024 * 1024);
+
+		await page.locator("input[type='file']").setInputFiles({
+			name: "large-document.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from(text),
+		});
+
+		await expect(page.getByText("100,000 words")).toBeVisible({
+			timeout: 10_000,
+		});
+		await page.getByRole("button", { name: /begin reading/i }).click();
+		await expect(page).toHaveURL(/#\/reader/, { timeout: 10_000 });
+		await expect(page.locator("rsvp-reader")).toContainText("100000");
 	});
 });
