@@ -19,7 +19,9 @@ test.describe("RSVP Reader", () => {
 
 	test("reader mounts and shows a word display", async ({ page }) => {
 		await goToReaderWithText(page, SAMPLE);
-		await expect(page.locator(".reading-box, rsvp-reader").first()).toBeVisible();
+		await expect(
+			page.locator(".reading-box, rsvp-reader").first(),
+		).toBeVisible();
 	});
 
 	test("Space bar toggles play and pause", async ({ page }) => {
@@ -64,5 +66,55 @@ test.describe("RSVP Reader", () => {
 	test("progress bar is visible", async ({ page }) => {
 		await goToReaderWithText(page, SAMPLE);
 		await expect(page.locator("rsvp-reader")).toBeVisible();
+	});
+
+	test("hold-to-read mouse gestures read, browse, and adjust speed", async ({
+		page,
+	}) => {
+		await goToReaderWithText(
+			page,
+			Array.from({ length: 700 }, (_, index) => `word${index}`).join(" "),
+		);
+		const settings = page.locator("settings-panel");
+		await settings.locator("input[type='checkbox']").first().check();
+
+		await expect(page.getByRole("button", { name: "Play" })).toHaveCount(0);
+		await expect(settings.getByText("Focus mode (immersion)")).toHaveCount(0);
+		await expect(settings.getByText("Start countdown (3s)")).toHaveCount(0);
+
+		const area = page.locator("[data-reader-interaction-area]");
+		const box = await area.boundingBox();
+		expect(box).not.toBeNull();
+		if (!box) return;
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+
+		const firstWord = await page.locator(".word-flash").textContent();
+		await page.mouse.move(x, y);
+		await page.mouse.down();
+		await page.waitForTimeout(350);
+		await page.mouse.up();
+		await expect
+			.poll(() => page.locator(".word-flash").textContent())
+			.not.toBe(firstWord);
+		const releasedWord = await page.locator(".word-flash").textContent();
+		await page.waitForTimeout(300);
+		expect(await page.locator(".word-flash").textContent()).toBe(releasedWord);
+
+		await page.mouse.move(x, y);
+		await page.mouse.down();
+		await page.mouse.move(x + 125, y, { steps: 4 });
+		await page.mouse.up();
+		await expect(page.locator("[data-reader-buffer-view]")).toBeVisible();
+
+		await page.keyboard.press("Enter");
+		await page.mouse.move(x, y);
+		await page.mouse.down();
+		await page.mouse.move(x, y - 125, { steps: 4 });
+		await expect(page.locator("[data-reader-speed-overlay]")).toContainText(
+			"350",
+		);
+		await page.mouse.up();
+		await expect(page.locator("[data-reader-speed-overlay]")).toHaveCount(0);
 	});
 });

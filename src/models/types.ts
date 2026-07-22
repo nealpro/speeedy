@@ -37,7 +37,20 @@ export type PauseView = "focus" | "context" | "fulltext";
 export type BionicFocusPosition = "early" | "balanced" | "late";
 export type RewindStep = number;
 
+export type ReaderControlAction =
+	| "read"
+	| "scrubBackward"
+	| "scrubForward"
+	| "speedDown"
+	| "speedUp";
+
+export type ReaderKeyBindings = Record<ReaderControlAction, string[]>;
+
 export interface ReaderSettings {
+	/** Hold-to-read interaction mode. Existing click-to-toggle playback remains the default. */
+	holdToReadMode: boolean;
+	/** Up to two alternative, layout-independent KeyboardEvent.code values per action. */
+	holdToReadBindings: ReaderKeyBindings;
 	wpm: number;
 	fontSize: number;
 	fontFamily: FontFamily;
@@ -158,13 +171,24 @@ export interface ParsedDocument {
 export interface SavedDocument {
 	id: string;
 	title: string;
-	text: string;
+	/** Legacy documents stored their complete text inline. New documents use document chunks. */
+	text?: string;
 	wordCount: number;
 	savedAt: string;
 	resumeWordIndex: number;
 	completionPercent: number;
+	storageVersion?: 1 | 2;
+	chunkCount?: number;
 	/** SHA-256 hash of text for deduplication; optional for legacy docs. */
 	contentHash?: string;
+}
+
+export interface DocumentChunk {
+	documentId: string;
+	chunkIndex: number;
+	startWordIndex: number;
+	wordCount: number;
+	text: string;
 }
 
 export interface OrpResult {

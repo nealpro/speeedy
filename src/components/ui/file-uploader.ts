@@ -1,6 +1,7 @@
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ParsedDocument } from "../../models/types.js";
+import { saveLargePlainTextFile } from "../../services/storage-service.js";
 import { parseFile } from "../../services/text-parser.js";
 
 /**
@@ -18,6 +19,7 @@ import { parseFile } from "../../services/text-parser.js";
  *
  * Events:
  *   file-parsed  → CustomEvent<{ doc: ParsedDocument }>
+ *   file-saved   → CustomEvent<{ savedDoc: SavedDocument }> for streamed imports
  *   file-error   → CustomEvent<{ message: string }>
  *   file-loading → CustomEvent<{ loading: boolean }>
  */
@@ -70,6 +72,21 @@ export class SpeeedyFileUploader extends LitElement {
 		this._emitLoading(true);
 
 		try {
+			const ext = file.name.split(".").pop()?.toLowerCase();
+			if (
+				file.size >= 1024 * 1024 &&
+				(ext === "txt" || ext === "md" || ext === "csv")
+			) {
+				const savedDoc = await saveLargePlainTextFile(file);
+				this.dispatchEvent(
+					new CustomEvent("file-saved", {
+						detail: { savedDoc },
+						bubbles: true,
+						composed: true,
+					}),
+				);
+				return;
+			}
 			const doc = await parseFile(file);
 			this.dispatchEvent(
 				new CustomEvent<{ doc: ParsedDocument }>("file-parsed", {

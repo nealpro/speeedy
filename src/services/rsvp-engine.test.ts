@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReaderSettings } from "../models/types.js";
 import { DEFAULT_SETTINGS } from "./defaults.js";
-import { computeOrp, RSVPEngine, tokenize } from "./rsvp-engine.js";
+import {
+	computeOrp,
+	type DocumentTokenProvider,
+	RSVPEngine,
+	tokenize,
+} from "./rsvp-engine.js";
 
 function makeSettings(overrides: Partial<ReaderSettings> = {}): ReaderSettings {
 	return { ...DEFAULT_SETTINGS, ...overrides };
@@ -424,6 +429,33 @@ describe("RSVPEngine", () => {
 			engine.play(makeSettings());
 			expect(listener).toHaveBeenCalledOnce();
 			engine.pause();
+		});
+	});
+
+	describe("buffered providers", () => {
+		it("loads only a bounded window around the resume position", async () => {
+			const words = Array.from(
+				{ length: 20_000 },
+				(_, index) => `word${index}`,
+			);
+			const getTokens = vi.fn(async (start: number, count: number) =>
+				words.slice(start, start + count).map((text) => ({
+					text,
+					pauseMultiplier: 1,
+				})),
+			);
+			const provider: DocumentTokenProvider = {
+				totalWords: words.length,
+				getTokens,
+			};
+
+			await engine.loadProvider(provider, makeSettings(), 8_000);
+
+			expect(engine.getState().totalWords).toBe(20_000);
+			expect(engine.getState().currentTokens[0].text).toBe("word8000");
+			expect(engine.tokens).toHaveLength(6_000);
+			expect(engine.windowStart).toBe(6_000);
+			expect(getTokens).toHaveBeenCalledWith(6_000, 6_000, expect.any(Object));
 		});
 	});
 });
