@@ -11,6 +11,7 @@ class AudioService {
 	private noiseBuffers: Map<string, AudioBuffer> = new Map();
 	private isMuted = false;
 	private currentNoiseType = "none";
+	private interactionListenersInstalled = false;
 
 	public get isMutedState(): boolean {
 		return this.isMuted;
@@ -38,27 +39,46 @@ class AudioService {
 		try {
 			this.ctx = new (window.AudioContext || window.webkitAudioContext)();
 			return this.ctx;
-		} catch {
+		} catch (error) {
+			this.logError("create AudioContext", error);
 			return null;
 		}
 	}
 
 	public initOnInteraction(): void {
 		if (typeof window === "undefined") return;
-		const resumeCtx = () => {
-			if (this.ctx && this.ctx.state !== "closed") {
-				const state = this.ctx.state as string;
-				if (state === "suspended" || state === "interrupted") {
-					this.ctx.resume().catch(() => this.resetCtx());
-				}
-			}
-		};
-		document.addEventListener("visibilitychange", () => {
-			if (document.visibilityState === "visible") resumeCtx();
-		});
-		window.addEventListener("pageshow", resumeCtx);
-		window.addEventListener("focus", resumeCtx);
-		resumeCtx();
+		// Create and resume the context while the browser still considers this a
+		// user gesture. Deferring creation until a later sound callback can leave
+		// the context suspended in browsers with stricter autoplay policies.
+		this.resumeContext();
+
+		if (this.interactionListenersInstalled) return;
+		this.interactionListenersInstalled = true;
+		document.addEventListener("visibilitychange", this.handleVisibilityChange);
+		window.addEventListener("pageshow", this.resumeContext);
+		window.addEventListener("focus", this.resumeContext);
+	}
+
+	private handleVisibilityChange = (): void => {
+		if (document.visibilityState === "visible") this.resumeContext();
+	};
+
+	private resumeContext = (): void => {
+		const ctx = this.getContext();
+		if (!ctx || ctx.state === "closed") return;
+		const state = ctx.state as string;
+		if (state === "suspended" || state === "interrupted") {
+			ctx.resume().catch((error) => {
+				this.logError("resume AudioContext", error);
+				this.resetCtx();
+			});
+		}
+	};
+
+	private logError(action: string, error: unknown): void {
+		if (import.meta.env.DEV) {
+			console.warn(`[speeedy:audio] Failed to ${action}.`, error);
+		}
 	}
 
 	private resetCtx(): void {
@@ -80,7 +100,10 @@ class AudioService {
 			ctx
 				.resume()
 				.then(callback)
-				.catch(() => this.resetCtx());
+				.catch((error) => {
+					this.logError("resume AudioContext for playback", error);
+					this.resetCtx();
+				});
 		} else {
 			callback();
 		}
@@ -117,8 +140,8 @@ class AudioService {
 
 				osc.start(now);
 				osc.stop(now + duration);
-			} catch {
-				/* ignore audio errors */
+			} catch (error) {
+				this.logError("play tick", error);
 			}
 		});
 	}
@@ -142,7 +165,9 @@ class AudioService {
 
 				osc.start(now);
 				osc.stop(now + 0.015);
-			} catch {}
+			} catch (error) {
+				this.logError("play hover sound", error);
+			}
 		});
 	}
 
@@ -166,7 +191,9 @@ class AudioService {
 					osc.start(time);
 					osc.stop(time + 0.012);
 				});
-			} catch {}
+			} catch (error) {
+				this.logError("play click sound", error);
+			}
 		});
 	}
 
@@ -188,7 +215,9 @@ class AudioService {
 				gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 				osc.start(now);
 				osc.stop(now + 0.06);
-			} catch {}
+			} catch (error) {
+				this.logError("play open sound", error);
+			}
 		});
 	}
 
@@ -210,7 +239,9 @@ class AudioService {
 				gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 				osc.start(now);
 				osc.stop(now + 0.06);
-			} catch {}
+			} catch (error) {
+				this.logError("play close sound", error);
+			}
 		});
 	}
 
@@ -357,8 +388,8 @@ class AudioService {
 					osc.start(t);
 					osc.stop(t + 0.36);
 				});
-			} catch {
-				/* ignore */
+			} catch (error) {
+				this.logError("play chime", error);
 			}
 		});
 	}
