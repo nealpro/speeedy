@@ -56,6 +56,9 @@ export class AppShell extends LitElement {
 		document.addEventListener("pointerdown", this.handleGlobalClick, {
 			capture: true,
 		});
+		document.addEventListener("keydown", this.handleGlobalKeydown, {
+			capture: true,
+		});
 	}
 
 	override disconnectedCallback(): void {
@@ -73,7 +76,14 @@ export class AppShell extends LitElement {
 		document.removeEventListener("pointerdown", this.handleGlobalClick, {
 			capture: true,
 		});
+		document.removeEventListener("keydown", this.handleGlobalKeydown, {
+			capture: true,
+		});
 	}
+
+	private handleGlobalKeydown = (): void => {
+		audioService.initOnInteraction();
+	};
 
 	private handleGlobalClick = (e: PointerEvent): void => {
 		audioService.initOnInteraction();
